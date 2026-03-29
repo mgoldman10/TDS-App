@@ -1,27 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --color-primary: #212121;
+  --color-accent: #FF3C00;
+  --color-white: #FFFFFF;
+  --color-gray: #C6C6C6;
+  --color-surface: #FFFFFF;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+.dark {
+  --color-primary: #e5e5e5;
+  --color-accent: #FF5722;
+  --color-white: #1a1a1a;
+  --color-gray: #3a3a3a;
+  --color-surface: #242424;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Montserrat', sans-serif;
+  color: var(--color-primary);
+  background: var(--color-white);
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+/* Dark mode overrides */
+.dark body {
+  background: #1a1a1a;
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: var(--color-surface);
+  color: var(--color-primary);
+  border-color: var(--color-gray);
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #6b6b6b;
+}
+
+.dark .bg-white {
+  background-color: var(--color-surface) !important;
+}
+
+.dark ::-webkit-scrollbar {
+  width: 8px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 4px;
 }
