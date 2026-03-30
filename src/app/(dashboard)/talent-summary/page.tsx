@@ -125,10 +125,17 @@ export default function TalentSummaryPage() {
     });
   })();
 
+  // Exclude archived members from current period; include them in historical
+  const isCurrentPeriod = selectedYear === currentFY && selectedQuarter === currentFQ;
+  const activeMemberIds = new Set(teamMembers.filter((m) => (m.status ?? "active") === "active").map((m) => m.id));
+  const tdiAssessments = isCurrentPeriod
+    ? filteredAssessments.filter((a) => activeMemberIds.has(a.memberId))
+    : filteredAssessments;
+
   // TDI calculation
-  const total = filteredAssessments.length;
+  const total = tdiAssessments.length;
   const counts: Record<PerformanceCategory, number> = { HP: 0, MP: 0, LP: 0, LCF: 0 };
-  for (const a of filteredAssessments) {
+  for (const a of tdiAssessments) {
     if (a.performanceCategory in counts) counts[a.performanceCategory]++;
   }
   const tdi = total > 0

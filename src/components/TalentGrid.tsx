@@ -271,24 +271,32 @@ export default function TalentGrid({ assessments, scoringParams, privacyMode, on
                 )}
 
                 {/* Tooltip */}
-                {isHovered && !privacyMode && (
-                  <g>
-                    <rect
-                      x={dotCx + 18} y={cy - 30}
-                      width={190} height={52}
-                      rx={4} fill="#212121" opacity={0.95}
-                    />
-                    <text x={dotCx + 26} y={cy - 12} fontSize={11} fontWeight={600} fill="white">
-                      {assessment.memberName}
-                    </text>
-                    <text x={dotCx + 26} y={cy + 2} fontSize={10} fill="#9ca3af">
-                      CF: {assessment.cultureFitScore.toFixed(1)} · Prod: {assessment.productivityScore.toFixed(1)}
-                    </text>
-                    <text x={dotCx + 26} y={cy + 14} fontSize={10} fill={fill}>
-                      {CATEGORY_LABELS[assessment.performanceCategory]}
-                    </text>
-                  </g>
-                )}
+                {isHovered && !privacyMode && (() => {
+                  const ttW = 190;
+                  const ttH = 52;
+                  const showLeft = dotCx + 18 + ttW > TOTAL_W;
+                  const showBelow = cy - 30 < 0;
+                  const tx = showLeft ? dotCx - 18 - ttW : dotCx + 18;
+                  const ty = showBelow ? cy + 20 : cy - 30;
+                  return (
+                    <g>
+                      <rect
+                        x={tx} y={ty}
+                        width={ttW} height={ttH}
+                        rx={4} fill="#212121" opacity={0.95}
+                      />
+                      <text x={tx + 8} y={ty + 18} fontSize={11} fontWeight={600} fill="white">
+                        {assessment.memberName}
+                      </text>
+                      <text x={tx + 8} y={ty + 32} fontSize={10} fill="#9ca3af">
+                        CF: {assessment.cultureFitScore.toFixed(1)} · Prod: {assessment.productivityScore.toFixed(1)}
+                      </text>
+                      <text x={tx + 8} y={ty + 44} fontSize={10} fill={fill}>
+                        {CATEGORY_LABELS[assessment.performanceCategory]}
+                      </text>
+                    </g>
+                  );
+                })()}
               </g>
             );
           });

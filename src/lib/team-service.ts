@@ -9,9 +9,10 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  arrayUnion,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { Team, TeamMember, TeamMemberChange } from "@/types/team";
+import type { Team, TeamMember, TeamMemberChange, MemberChangeType, TeamLeaderChange } from "@/types/team";
 
 // --- Teams ---
 
@@ -115,6 +116,9 @@ export async function createTeamMember(
     ...data,
     isAppUser: false,
     appUserId: null,
+    status: "active",
+    archivedAt: null,
+    archivedReason: null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -124,7 +128,7 @@ export async function createTeamMember(
 export async function updateTeamMember(
   companyId: string,
   memberId: string,
-  data: Partial<{ name: string; role: string; teamId: string; reportsToUserId: string }>
+  data: Partial<{ name: string; role: string; teamId: string; reportsToUserId: string; status: "active" | "archived"; archivedAt: ReturnType<typeof serverTimestamp> | null; archivedReason: string | null }>
 ): Promise<void> {
   await updateDoc(doc(db, "companies", companyId, "teamMembers", memberId), {
     ...data,
@@ -148,10 +152,13 @@ function changesRef(companyId: string) {
 export async function logMemberChange(
   companyId: string,
   memberId: string,
-  changeType: "role" | "team" | "reporting_line",
+  changeType: MemberChangeType,
   previousValue: string,
   newValue: string,
-  changedByUserId: string
+  changedByUserId: string,
+  effectiveDate: string,
+  fiscalYear: number,
+  fiscalQuarter: number
 ): Promise<void> {
   await addDoc(changesRef(companyId), {
     memberId,
@@ -160,6 +167,9 @@ export async function logMemberChange(
     newValue,
     changedAt: serverTimestamp(),
     changedByUserId,
+    effectiveDate,
+    fiscalYear,
+    fiscalQuarter,
   });
 }
 
@@ -174,4 +184,111 @@ export async function getMemberChanges(
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as TeamMemberChange));
+}
+
+/** Get all changes for members of a given team (for leader_change annotations) */
+export async function getChangesByType(
+  companyId: string,
+  changeType: MemberChangeType
+): Promise<TeamMemberChange[]> {
+  const q = query(
+    changesRef(companyId),
+    where("changeType", "==", changeType),
+    orderBy("changedAt", "desc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as TeamMemberChange));
+}
+
+/** Archive a team member (soft delete) */
+export async function archiveMember(
+  companyId: string,
+  memberId: string,
+  reason: string,
+  changedByUserId: string,
+  effectiveDate: string,
+  fiscalYear: number,
+  fiscalQuarter: number
+): Promise<void> {
+  await updateDoc(doc(db, "companies", companyId, "teamMembers", memberId), {
+    status: "archived",
+    archivedAt: serverTimestamp(),
+    archivedReason: reason,
+    updatedAt: serverTimestamp(),
+  });
+  await logMemberChange(companyId, memberId, "archived", "active", reason, changedByUserId, effectiveDate, fiscalYear, fiscalQuarter);
+}
+
+/** Change a team member's team */
+export async function changeTeam(
+  companyId: string,
+  memberId: string,
+  oldTeamName: string,
+  newTeamId: string,
+  newTeamName: string,
+  newReportsToUserId: string,
+  changedByUserId: string,
+  effectiveDate: string,
+  fiscalYear: number,
+  fiscalQuarter: number
+): Promise<void> {
+  await updateDoc(doc(db, "companies", companyId, "teamMembers", memberId), {
+    teamId: newTeamId,
+    reportsToUserId: newReportsToUserId,
+    updatedAt: serverTimestamp(),
+  });
+  await logMemberChange(companyId, memberId, "team", oldTeamName, newTeamName, changedByUserId, effectiveDate, fiscalYear, fiscalQuarter);
+}
+
+/** Promote a team member to leader of their team */
+export async function promoteToLeader(
+  companyId: string,
+  memberId: string,
+  memberName: string,
+  memberTitle: string,
+  teamId: string,
+  previousLeaderId: string,
+  previousLeaderName: string,
+  changedByUserId: string,
+  effectiveDate: string,
+  fiscalYear: number,
+  fiscalQuarter: number
+): Promise<void> {
+  // Update the team's leader
+  await updateDoc(doc(db, "companies", companyId, "teams", teamId), {
+    leaderId: memberId,
+    leaderName: memberName,
+    leaderTitle: memberTitle,
+    leaderHistory: arrayUnion({
+      previousLeaderId,
+      previousLeaderName,
+      newLeaderId: memberId,
+      newLeaderName: memberName,
+      changedAt: new Date().toISOString(),
+      changedByUserId,
+      effectiveDate,
+      fiscalYear,
+      fiscalQuarter,
+    } as unknown as TeamLeaderChange),
+    updatedAt: serverTimestamp(),
+  });
+  // Log promotion on the promoted member
+  await logMemberChange(companyId, memberId, "promoted_to_leader", previousLeaderName || "none", memberName, changedByUserId, effectiveDate, fiscalYear, fiscalQuarter);
+}
+
+/** Log a leader change event on all members of a team */
+export async function logLeaderChangeForTeamMembers(
+  companyId: string,
+  teamId: string,
+  previousLeaderName: string,
+  newLeaderName: string,
+  changedByUserId: string,
+  effectiveDate: string,
+  fiscalYear: number,
+  fiscalQuarter: number
+): Promise<void> {
+  const teamMembersData = await getTeamMembers(companyId, teamId);
+  for (const m of teamMembersData) {
+    await logMemberChange(companyId, m.id, "leader_change", previousLeaderName, newLeaderName, changedByUserId, effectiveDate, fiscalYear, fiscalQuarter);
+  }
 }

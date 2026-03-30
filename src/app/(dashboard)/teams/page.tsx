@@ -14,10 +14,14 @@ import {
   getTeamMembers,
   createTeamMember,
   updateTeamMember,
-  deleteTeamMember,
   logMemberChange,
+  archiveMember,
+  changeTeam,
+  promoteToLeader,
+  logLeaderChangeForTeamMembers,
 } from "@/lib/team-service";
 import { getCompanyUsers } from "@/lib/user-service";
+import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { Team, TeamMember } from "@/types/team";
 import type { UserProfile } from "@/types/auth";
@@ -40,12 +44,32 @@ export default function TeamsPage() {
 
   const companyId = activeCompany?.id ?? profile?.companyId;
   const isAdmin = canManageCompany(profile);
+  const startMonth = activeCompany?.fiscalYearStartMonth ?? 1;
+  const now = new Date();
+  const currentFY = getFiscalYear(now, startMonth);
+  const currentFQ = getFiscalQuarter(now, startMonth);
+  const todayISO = now.toISOString().split("T")[0];
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [members, setMembers] = useState<Record<string, TeamMember[]>>({});
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+
+  // Archive modal state
+  const [archivingMemberId, setArchivingMemberId] = useState<string | null>(null);
+  const [archivingTeamId, setArchivingTeamId] = useState<string | null>(null);
+  const [archiveReason, setArchiveReason] = useState("");
+
+  // Change team modal state
+  const [changingTeamMemberId, setChangingTeamMemberId] = useState<string | null>(null);
+  const [changingTeamFromId, setChangingTeamFromId] = useState<string | null>(null);
+  const [changingTeamToId, setChangingTeamToId] = useState("");
+
+  // Promote to leader state
+  const [promotingMemberId, setPromotingMemberId] = useState<string | null>(null);
+  const [promotingTeamId, setPromotingTeamId] = useState<string | null>(null);
 
   // Expanded teams
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
@@ -199,11 +223,21 @@ export default function TeamsPage() {
   async function handleSaveTeam(teamId: string) {
     if (!companyId || !editTeamName.trim()) return;
     try {
+      const oldTeam = teams.find((t) => t.id === teamId);
+      const leaderChanged = oldTeam && oldTeam.leaderName !== editTeamLeader.trim() && oldTeam.leaderName;
       await updateTeam(companyId, teamId, {
         name: editTeamName.trim(),
         leaderName: editTeamLeader.trim(),
         leaderTitle: editTeamLeaderTitle.trim(),
       });
+      // If leader changed, log it on all team members
+      if (leaderChanged) {
+        await logLeaderChangeForTeamMembers(
+          companyId, teamId,
+          oldTeam.leaderName, editTeamLeader.trim(),
+          profile?.uid || "", todayISO, currentFY, currentFQ
+        );
+      }
       setTeams(teams.map((t) =>
         t.id === teamId
           ? { ...t, name: editTeamName.trim(), leaderName: editTeamLeader.trim(), leaderTitle: editTeamLeaderTitle.trim() }
@@ -274,7 +308,7 @@ export default function TeamsPage() {
       if (editName !== member.name) updates.name = editName;
       if (editTitle !== member.role) {
         if (member.role && editTitle !== member.role) {
-          await logMemberChange(companyId, memberId, "role", member.role, editTitle, profile?.uid || "");
+          await logMemberChange(companyId, memberId, "role", member.role, editTitle, profile?.uid || "", todayISO, currentFY, currentFQ);
         }
         updates.role = editTitle;
       }
@@ -293,17 +327,52 @@ export default function TeamsPage() {
     }
   }
 
-  async function handleDeleteMember(memberId: string, teamId: string) {
-    if (!companyId || !window.confirm("Remove this team member?")) return;
+
+  async function handleArchiveMember() {
+    if (!companyId || !archivingMemberId || !archivingTeamId) return;
     try {
-      await deleteTeamMember(companyId, memberId);
+      await archiveMember(companyId, archivingMemberId, archiveReason || "Left company", profile?.uid || "", todayISO, currentFY, currentFQ);
       setMembers({
         ...members,
-        [teamId]: members[teamId].filter((m) => m.id !== memberId),
+        [archivingTeamId]: members[archivingTeamId].map((m) =>
+          m.id === archivingMemberId ? { ...m, status: "archived" as const, archivedReason: archiveReason || "Left company" } : m
+        ),
       });
-    } catch {
-      setError("Failed to remove member.");
-    }
+      setArchivingMemberId(null); setArchivingTeamId(null); setArchiveReason("");
+    } catch { setError("Failed to archive member."); }
+  }
+
+  async function handleChangeTeam() {
+    if (!companyId || !changingTeamMemberId || !changingTeamFromId || !changingTeamToId) return;
+    const member = members[changingTeamFromId]?.find((m) => m.id === changingTeamMemberId);
+    if (!member) return;
+    const fromTeam = teams.find((t) => t.id === changingTeamFromId);
+    const toTeam = teams.find((t) => t.id === changingTeamToId);
+    if (!toTeam) return;
+    try {
+      await changeTeam(companyId, changingTeamMemberId, fromTeam?.name || "", changingTeamToId, toTeam.name, toTeam.leaderId || "", profile?.uid || "", todayISO, currentFY, currentFQ);
+      const updatedMember = { ...member, teamId: changingTeamToId, reportsToUserId: toTeam.leaderId || "" };
+      setMembers({
+        ...members,
+        [changingTeamFromId]: members[changingTeamFromId].filter((m) => m.id !== changingTeamMemberId),
+        [changingTeamToId]: [...(members[changingTeamToId] || []), updatedMember],
+      });
+      setChangingTeamMemberId(null); setChangingTeamFromId(null); setChangingTeamToId("");
+    } catch { setError("Failed to change team."); }
+  }
+
+  async function handlePromoteToLeader() {
+    if (!companyId || !promotingMemberId || !promotingTeamId) return;
+    const member = members[promotingTeamId]?.find((m) => m.id === promotingMemberId);
+    const team = teams.find((t) => t.id === promotingTeamId);
+    if (!member || !team) return;
+    try {
+      await promoteToLeader(companyId, promotingMemberId, member.name, member.role, promotingTeamId, team.leaderId, team.leaderName, profile?.uid || "", todayISO, currentFY, currentFQ);
+      // Also log leader change for all team members
+      await logLeaderChangeForTeamMembers(companyId, promotingTeamId, team.leaderName, member.name, profile?.uid || "", todayISO, currentFY, currentFQ);
+      setTeams(teams.map((t) => t.id === promotingTeamId ? { ...t, leaderId: promotingMemberId, leaderName: member.name, leaderTitle: member.role } : t));
+      setPromotingMemberId(null); setPromotingTeamId(null);
+    } catch { setError("Failed to promote member."); }
   }
 
   const tree = buildTree(teams);
@@ -311,7 +380,8 @@ export default function TeamsPage() {
   function renderTeam(team: Team) {
     const isExpanded = expandedTeams.has(team.id);
     const childTeams = tree.get(team.id) || [];
-    const teamMembers = members[team.id] || [];
+    const allTeamMembers = members[team.id] || [];
+    const teamMembers = showArchived ? allTeamMembers : allTeamMembers.filter((m) => (m.status ?? "active") === "active");
     const leaderMembers = getLeadersAsMembers(team.id);
     const isTopLevel = !team.parentTeamId;
     const indent = team.level ?? 0;
@@ -433,16 +503,25 @@ export default function TeamsPage() {
                 <div className={`space-y-1 ${leaderMembers.length > 0 ? "mt-1" : ""}`}>
                   {teamMembers.map((m) => {
                     const isEditing = editingMemberId === m.id;
+                    const isArchived = m.status === "archived";
                     const leadsTeams = childTeams.filter((ct) => ct.leaderName === m.name);
+                    const isArchiving = archivingMemberId === m.id;
+                    const isChangingTeam = changingTeamMemberId === m.id;
+                    const isPromoting = promotingMemberId === m.id;
                     return (
-                      <div key={m.id} className="rounded-[4px] border border-brand-gray/50 bg-white">
+                      <div key={m.id} className={`rounded-[4px] border border-brand-gray/50 ${isArchived ? "bg-primary/[0.03] opacity-60" : "bg-white"}`}>
                         <div className="flex items-center gap-3 p-2.5">
                           <div className="flex-1">
-                            <button onClick={() => router.push(`/members/${m.id}`)} className="text-sm font-semibold text-primary transition hover:text-accent">
+                            <button onClick={() => router.push(`/members/${m.id}`)} className={`text-sm font-semibold transition hover:text-accent ${isArchived ? "text-primary/50" : "text-primary"}`}>
                               {m.name}
                             </button>
                             {m.role && <span className="ml-2 text-xs text-primary/50">{m.role}</span>}
                           </div>
+                          {isArchived && (
+                            <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/50">
+                              Archived{m.archivedReason ? ` — ${m.archivedReason}` : ""}
+                            </span>
+                          )}
                           {leadsTeams.map((lt) => (
                             <span key={lt.id} className="rounded-[2px] bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-blue-700">
                               Leads {lt.name}
@@ -453,20 +532,87 @@ export default function TeamsPage() {
                               App User
                             </span>
                           )}
-                          <button onClick={() => {
-                            if (isEditing) { setEditingMemberId(null); }
-                            else { setEditingMemberId(m.id); setEditName(m.name); setEditTitle(m.role); }
-                          }}
-                            className="text-xs text-primary/50 transition hover:text-primary">
-                            {isEditing ? "▲" : "✎"}
-                          </button>
-                          <button onClick={() => handleDeleteMember(m.id, team.id)}
-                            className="text-xs text-accent/50 transition hover:text-accent">
-                            ✕
-                          </button>
+                          {!isArchived && (
+                            <>
+                              <button onClick={() => {
+                                if (isEditing) { setEditingMemberId(null); }
+                                else { setEditingMemberId(m.id); setEditName(m.name); setEditTitle(m.role); }
+                              }}
+                                className="text-xs text-primary/50 transition hover:text-primary" title="Edit">
+                                {isEditing ? "▲" : "✎"}
+                              </button>
+                              <button onClick={() => { setArchivingMemberId(m.id); setArchivingTeamId(team.id); setArchiveReason(""); }}
+                                className="text-[10px] text-primary/30 transition hover:text-primary/60" title="Archive member">
+                                ▼
+                              </button>
+                            </>
+                          )}
                         </div>
 
-                        {isEditing && (
+                        {/* Archive confirmation */}
+                        {isArchiving && (
+                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
+                            <p className="text-xs font-semibold text-primary/60">Archive {m.name}?</p>
+                            <p className="text-[10px] text-primary/40">Their assessment history will be preserved for TDI reporting.</p>
+                            <input type="text" value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
+                              placeholder="Reason (e.g., Left company, Terminated)"
+                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                            <div className="flex gap-2">
+                              <button onClick={handleArchiveMember}
+                                className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
+                                Archive
+                              </button>
+                              <button onClick={() => { setArchivingMemberId(null); setArchivingTeamId(null); }}
+                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Change team form */}
+                        {isChangingTeam && (
+                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
+                            <p className="text-xs font-semibold text-primary/60">Move {m.name} to another team</p>
+                            <select value={changingTeamToId} onChange={(e) => setChangingTeamToId(e.target.value)}
+                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                              <option value="">Select team...</option>
+                              {teams.filter((t) => t.id !== team.id).map((t) => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                              ))}
+                            </select>
+                            <div className="flex gap-2">
+                              <button onClick={handleChangeTeam} disabled={!changingTeamToId}
+                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                Move
+                              </button>
+                              <button onClick={() => { setChangingTeamMemberId(null); setChangingTeamFromId(null); setChangingTeamToId(""); }}
+                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Promote confirmation */}
+                        {isPromoting && (
+                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
+                            <p className="text-xs font-semibold text-primary/60">Promote {m.name} to leader of {team.name}?</p>
+                            {team.leaderName && <p className="text-[10px] text-primary/40">This will replace {team.leaderName} as the team leader.</p>}
+                            <div className="flex gap-2">
+                              <button onClick={handlePromoteToLeader}
+                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
+                                Promote
+                              </button>
+                              <button onClick={() => { setPromotingMemberId(null); setPromotingTeamId(null); }}
+                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {isEditing && !isArchived && (
                           <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
                             <div className="grid grid-cols-2 gap-2">
                               <div>
@@ -480,10 +626,20 @@ export default function TeamsPage() {
                                   className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                               </div>
                             </div>
-                            <button onClick={() => handleSaveMember(m.id, team.id)}
-                              className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
-                              Save
-                            </button>
+                            <div className="flex gap-2">
+                              <button onClick={() => handleSaveMember(m.id, team.id)}
+                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
+                                Save
+                              </button>
+                              <button onClick={() => { setChangingTeamMemberId(m.id); setChangingTeamFromId(team.id); setChangingTeamToId(""); setEditingMemberId(null); }}
+                                className="rounded-[4px] border-[1.5px] border-blue-500 bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-500 transition hover:bg-blue-500 hover:text-white">
+                                Change Team
+                              </button>
+                              <button onClick={() => { setPromotingMemberId(m.id); setPromotingTeamId(team.id); setEditingMemberId(null); }}
+                                className="rounded-[4px] border-[1.5px] border-green-600 bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-green-600 transition hover:bg-green-600 hover:text-white">
+                                Promote to Leader
+                              </button>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -617,15 +773,21 @@ export default function TeamsPage() {
           Organize your team hierarchy. Click a member name to view their profile.
         </p>
 
-        {/* Search */}
-        <div className="mt-4">
+        {/* Search + filters */}
+        <div className="mt-4 flex items-center gap-4">
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search team members..."
-            className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary"
+            className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary"
           />
+          <label className="flex items-center gap-2 cursor-pointer whitespace-nowrap">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+            <span className="text-xs text-primary/50">Show Archived</span>
+          </label>
+        </div>
+        <div>
           {searchQuery.trim() && (() => {
             const q = searchQuery.toLowerCase();
             const allMembers: { id: string; name: string; role: string; teamName: string }[] = [];

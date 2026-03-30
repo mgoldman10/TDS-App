@@ -7,7 +7,7 @@ import {
 } from "recharts";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { getAllTeamMembers, getTeams } from "@/lib/team-service";
+import { getAllTeamMembers, getTeams, getMemberChanges } from "@/lib/team-service";
 import { getAssessmentHistory, getAssessmentForMember, createAssessment, updateAssessment } from "@/lib/assessment-service";
 import { getTargetsForMember, createTarget, updateTarget, deleteTarget } from "@/lib/productivity-service";
 import { getActionPlansForMember, createActionPlan, addAction, updateActions, addNote } from "@/lib/actionplan-service";
@@ -19,7 +19,7 @@ import { assignCategory } from "@/lib/category-scoring";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { formatNumber, stripCommas } from "@/lib/formatNumber";
 import UserAvatar from "@/components/UserAvatar";
-import type { TeamMember, Team } from "@/types/team";
+import type { TeamMember, Team, TeamMemberChange } from "@/types/team";
 import type { Assessment, CultureFitRating, CultureFitScore, ProductivityActual, PerformanceCategory } from "@/types/assessment";
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues, NullableMonthlyValues } from "@/types/productivity";
 import type { CoreValue } from "@/types/corevalue";
@@ -50,6 +50,7 @@ export default function MemberSummaryPage() {
   const [targets, setTargets] = useState<ProductivityTarget[]>([]);
   const [, setCoreValues] = useState<CoreValue[]>([]);
   const [actionPlans, setActionPlans] = useState<ActionPlan[]>([]);
+  const [memberChanges, setMemberChanges] = useState<TeamMemberChange[]>([]);
   const [loading, setLoading] = useState(true);
 
   // UI state
@@ -88,13 +89,14 @@ export default function MemberSummaryPage() {
   async function loadData() {
     if (!companyId) return;
     try {
-      const [allMembers, allTeams, assessmentData, targetData, planData, valuesData] = await Promise.all([
+      const [allMembers, allTeams, assessmentData, targetData, planData, valuesData, changesData] = await Promise.all([
         getAllTeamMembers(companyId),
         getTeams(companyId),
         getAssessmentHistory(companyId, memberId),
         getTargetsForMember(companyId, memberId),
         getActionPlansForMember(companyId, memberId),
         getCoreValues(companyId),
+        getMemberChanges(companyId, memberId),
       ]);
       const m = allMembers.find((tm) => tm.id === memberId);
       setMember(m ?? null);
@@ -103,6 +105,7 @@ export default function MemberSummaryPage() {
       setTargets(targetData);
       setActionPlans(planData);
       setCoreValues(valuesData);
+      setMemberChanges(changesData);
 
       // Load assessment for selected quarter
       await loadAssessmentForQuarter(assessYear, assessQuarter, valuesData, targetData);
@@ -261,7 +264,14 @@ export default function MemberSummaryPage() {
         <div className="mt-4 flex items-center gap-4">
           <UserAvatar name={member.name} size="lg" category={latestAssessment?.performanceCategory} />
           <div>
-            <h1 className="text-2xl font-bold text-primary">{member.name}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-primary">{member.name}</h1>
+              {(member.status === "archived") && (
+                <span className="rounded-[2px] bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary/50">
+                  Archived{member.archivedReason ? ` — ${member.archivedReason}` : ""}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2 text-sm text-primary/50">
               {member.role && <span>{member.role}</span>}
               {team && <span>· {team.name}</span>}
@@ -374,14 +384,48 @@ export default function MemberSummaryPage() {
                   {assessments.map((a) => {
                     const qKey = `${a.fiscalYear}-${a.fiscalQuarter}`;
                     const isExpanded = expandedQuarter === qKey;
+                    // Find changes that occurred during this quarter
+                    const quarterChanges = memberChanges.filter((c) =>
+                      c.fiscalYear === a.fiscalYear && c.fiscalQuarter === a.fiscalQuarter
+                    );
                     return (
                       <div key={a.id} className="rounded-[4px] border border-brand-gray bg-white shadow-sm">
                         <button onClick={() => setExpandedQuarter(isExpanded ? null : qKey)} className="flex w-full items-center gap-3 p-3 text-left">
                           <span className="text-sm font-semibold text-primary">Q{a.fiscalQuarter} FY{a.fiscalYear}</span>
                           <span className="text-xs text-primary/50">CF: {a.cultureFitScore.toFixed(1)} · Prod: {a.productivityScore.toFixed(1)}</span>
                           <span className={`rounded-[2px] px-2 py-0.5 text-[9px] font-semibold ${CATEGORY_COLORS[a.performanceCategory].bg} ${CATEGORY_COLORS[a.performanceCategory].text}`}>{a.performanceCategory}</span>
+                          {quarterChanges.length > 0 && (
+                            <span className="rounded-[2px] bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700">
+                              {quarterChanges.length} change{quarterChanges.length !== 1 ? "s" : ""}
+                            </span>
+                          )}
                           <span className="ml-auto text-sm text-primary/40">{isExpanded ? "▲" : "▼"}</span>
                         </button>
+                        {/* Change annotations */}
+                        {quarterChanges.length > 0 && (
+                          <div className="border-t border-brand-gray/50 px-3 py-2 space-y-1 bg-blue-50/50">
+                            {quarterChanges.map((c) => (
+                              <div key={c.id} className="flex items-center gap-2 text-[11px]">
+                                <span className="font-semibold text-blue-600">
+                                  {c.changeType === "team" && "Team changed"}
+                                  {c.changeType === "promoted_to_leader" && "Promoted to leader"}
+                                  {c.changeType === "leader_change" && "New team leader"}
+                                  {c.changeType === "role" && "Role changed"}
+                                  {c.changeType === "archived" && "Archived"}
+                                  {c.changeType === "reporting_line" && "Reporting line changed"}
+                                </span>
+                                <span className="text-primary/50">
+                                  {c.previousValue} → {c.newValue}
+                                </span>
+                                {c.effectiveDate && (
+                                  <span className="text-primary/30">
+                                    ({new Date(c.effectiveDate + "T00:00:00").toLocaleDateString()})
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         {isExpanded && (
                           <div className="border-t border-brand-gray px-3 pb-3 pt-2 space-y-3">
                             <div>
