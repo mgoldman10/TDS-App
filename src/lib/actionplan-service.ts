@@ -9,6 +9,7 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
+  limit,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { ActionPlan, ActionItem, ActionNote } from "@/types/actionplan";
@@ -17,34 +18,20 @@ function plansRef(companyId: string) {
   return collection(db, "companies", companyId, "actionPlans");
 }
 
+/** Get the single ongoing action plan for a member (creates none — call createActionPlan if needed) */
 export async function getActionPlanForMember(
   companyId: string,
-  memberId: string,
-  fiscalYear: number,
-  fiscalQuarter: number
+  memberId: string
 ): Promise<ActionPlan | null> {
   const q = query(
     plansRef(companyId),
     where("memberId", "==", memberId),
-    where("fiscalYear", "==", fiscalYear),
-    where("fiscalQuarter", "==", fiscalQuarter)
+    orderBy("createdAt", "desc"),
+    limit(1)
   );
   const snap = await getDocs(q);
   if (snap.empty) return null;
   return { id: snap.docs[0].id, ...snap.docs[0].data() } as ActionPlan;
-}
-
-export async function getActionPlansForMember(
-  companyId: string,
-  memberId: string
-): Promise<ActionPlan[]> {
-  const q = query(
-    plansRef(companyId),
-    where("memberId", "==", memberId),
-    orderBy("fiscalYear", "desc")
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ActionPlan));
 }
 
 export async function createActionPlan(
@@ -52,8 +39,6 @@ export async function createActionPlan(
   data: {
     memberId: string;
     memberName: string;
-    fiscalYear: number;
-    fiscalQuarter: number;
   }
 ): Promise<string> {
   const ref = await addDoc(plansRef(companyId), {

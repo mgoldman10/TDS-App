@@ -4,6 +4,7 @@ export interface ActionItem {
   description: string;
   targetDate: string;       // ISO date string
   completedAt: string | null; // ISO date string or null if not done
+  owner: string;            // display name of accountable person
 }
 
 export interface ActionNote {
@@ -15,8 +16,6 @@ export interface ActionPlan {
   id: string;
   memberId: string;
   memberName: string;
-  fiscalYear: number;
-  fiscalQuarter: number;
   actions: ActionItem[];
   notes: ActionNote[];
   createdAt: Timestamp;

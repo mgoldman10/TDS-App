@@ -10,7 +10,10 @@ import { useCompany } from "@/contexts/CompanyContext";
 import { getAllTeamMembers, getTeams, getMemberChanges } from "@/lib/team-service";
 import { getAssessmentHistory, getAssessmentForMember, createAssessment, updateAssessment } from "@/lib/assessment-service";
 import { getTargetsForMember, createTarget, updateTarget, deleteTarget } from "@/lib/productivity-service";
-import { getActionPlansForMember, createActionPlan, addAction, updateActions, addNote } from "@/lib/actionplan-service";
+import { getActionPlanForMember, createActionPlan, addAction, updateActions, addNote } from "@/lib/actionplan-service";
+import { ensureDefaultCoaches } from "@/lib/coach-service";
+import AskMikeButton from "@/components/askmike/AskMikeButton";
+import ChatPanel from "@/components/askmike/ChatPanel";
 import { getCoreValues } from "@/lib/corevalue-service";
 import { calculateCultureFitScore } from "@/lib/culture-fit-scoring";
 import { calculateTotalProductivityScore } from "@/lib/productivity-scoring";
@@ -24,6 +27,7 @@ import type { Assessment, CultureFitRating, CultureFitScore, ProductivityActual,
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues, NullableMonthlyValues } from "@/types/productivity";
 import type { CoreValue } from "@/types/corevalue";
 import type { ActionPlan, ActionItem } from "@/types/actionplan";
+import type { Coach } from "@/types/coach";
 import { CATEGORY_COLORS, CATEGORY_LABELS, RATING_LABELS } from "@/types/assessment";
 import { DEFAULT_MONTHLY } from "@/types/productivity";
 import { DEFAULT_SCORING_PARAMETERS, DEFAULT_CULTURE_FIT_RATING_SCORES, DEFAULT_CULTURE_FIT_CAPS } from "@/types/company";
@@ -49,7 +53,7 @@ export default function MemberSummaryPage() {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [targets, setTargets] = useState<ProductivityTarget[]>([]);
   const [, setCoreValues] = useState<CoreValue[]>([]);
-  const [actionPlans, setActionPlans] = useState<ActionPlan[]>([]);
+  const [memberPlan, setMemberPlan] = useState<ActionPlan | null>(null);
   const [memberChanges, setMemberChanges] = useState<TeamMemberChange[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -71,7 +75,14 @@ export default function MemberSummaryPage() {
 
   // Action plan state
   const [newActionDesc, setNewActionDesc] = useState("");
+  const [newActionOwner, setNewActionOwner] = useState("");
   const [newActionDate, setNewActionDate] = useState("");
+
+  // AskMike coach state
+  const [peopleCoach, setPeopleCoach] = useState<Coach | null>(null);
+  const [difficultCoach, setDifficultCoach] = useState<Coach | null>(null);
+  const [showChat, setShowChat] = useState(false);
+  const [activeCoach, setActiveCoach] = useState<Coach | null>(null);
   const [newNoteText, setNewNoteText] = useState("");
 
   // Target editing state
@@ -89,23 +100,28 @@ export default function MemberSummaryPage() {
   async function loadData() {
     if (!companyId) return;
     try {
-      const [allMembers, allTeams, assessmentData, targetData, planData, valuesData, changesData] = await Promise.all([
+      const [allMembers, allTeams, assessmentData, targetData, planData, valuesData, changesData, coachesData] = await Promise.all([
         getAllTeamMembers(companyId),
         getTeams(companyId),
         getAssessmentHistory(companyId, memberId),
         getTargetsForMember(companyId, memberId),
-        getActionPlansForMember(companyId, memberId),
+        getActionPlanForMember(companyId, memberId),
         getCoreValues(companyId),
         getMemberChanges(companyId, memberId),
+        ensureDefaultCoaches().catch(() => [] as Coach[]),
       ]);
       const m = allMembers.find((tm) => tm.id === memberId);
       setMember(m ?? null);
       if (m) setTeam(allTeams.find((t) => t.id === m.teamId) ?? null);
       setAssessments(assessmentData);
       setTargets(targetData);
-      setActionPlans(planData);
+      setMemberPlan(planData);
       setCoreValues(valuesData);
       setMemberChanges(changesData);
+      const pc = coachesData.find((c) => c.name.toLowerCase().includes("people"));
+      const dc = coachesData.find((c) => c.name.toLowerCase().includes("difficult"));
+      if (pc) setPeopleCoach(pc);
+      if (dc) setDifficultCoach(dc);
 
       // Load assessment for selected quarter
       await loadAssessmentForQuarter(assessYear, assessQuarter, valuesData, targetData);
@@ -157,9 +173,8 @@ export default function MemberSummaryPage() {
 
   const latestAssessment = assessments.length > 0 ? assessments[0] : null;
   const trendData = [...assessments].reverse().map((a) => ({ quarter: `Q${a.fiscalQuarter} FY${a.fiscalYear}`, cultureFit: a.cultureFitScore, productivity: a.productivityScore }));
-  const currentPlan = actionPlans.find((p) => p.fiscalYear === currentFY && p.fiscalQuarter === currentFQ);
-  const openActions = currentPlan?.actions.filter((a) => !a.completedAt) ?? [];
-  const completedActions = currentPlan?.actions.filter((a) => a.completedAt) ?? [];
+  const openActions = (memberPlan?.actions ?? []).filter((a: ActionItem) => !a.completedAt).sort((a: ActionItem, b: ActionItem) => (a.targetDate || "9999") < (b.targetDate || "9999") ? -1 : 1);
+  const completedActions = (memberPlan?.actions ?? []).filter((a: ActionItem) => a.completedAt);
   const { total: weightTotal, valid: weightsValid } = validateWeights(targets);
 
   // Handlers
@@ -196,33 +211,83 @@ export default function MemberSummaryPage() {
 
   async function handleAddAction() {
     if (!companyId || !newActionDesc.trim()) return;
-    let plan = currentPlan;
+    let plan = memberPlan;
     if (!plan) {
-      const id = await createActionPlan(companyId, { memberId, memberName: member?.name ?? "", fiscalYear: currentFY, fiscalQuarter: currentFQ });
-      plan = { id, memberId, memberName: member?.name ?? "", fiscalYear: currentFY, fiscalQuarter: currentFQ, actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
-      setActionPlans([plan, ...actionPlans]);
+      const id = await createActionPlan(companyId, { memberId, memberName: member?.name ?? "" });
+      plan = { id, memberId, memberName: member?.name ?? "", actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
+      setMemberPlan(plan);
     }
-    const action: ActionItem = { description: newActionDesc.trim(), targetDate: newActionDate, completedAt: null };
+    const action: ActionItem = { description: newActionDesc.trim(), targetDate: newActionDate, completedAt: null, owner: newActionOwner || profile?.displayName || "" };
     await addAction(companyId, plan.id, plan.actions, action);
-    setActionPlans(actionPlans.map((p) => p.id === plan!.id ? { ...p, actions: [...p.actions, action] } : p));
-    setNewActionDesc(""); setNewActionDate("");
+    setMemberPlan({ ...plan, actions: [...plan.actions, action] });
+    setNewActionDesc(""); setNewActionOwner(""); setNewActionDate("");
   }
 
-  async function handleToggleAction(planId: string, idx: number) {
-    if (!companyId) return;
-    const plan = actionPlans.find((p) => p.id === planId);
-    if (!plan) return;
-    const updated = [...plan.actions];
+  async function handleToggleAction(idx: number) {
+    if (!companyId || !memberPlan) return;
+    const updated = [...memberPlan.actions];
     updated[idx] = { ...updated[idx], completedAt: updated[idx].completedAt ? null : new Date().toISOString().split("T")[0] };
-    await updateActions(companyId, planId, updated);
-    setActionPlans(actionPlans.map((p) => p.id === planId ? { ...p, actions: updated } : p));
+    await updateActions(companyId, memberPlan.id, updated);
+    setMemberPlan({ ...memberPlan, actions: updated });
+  }
+
+  async function handleChangeOwner(idx: number, newOwner: string) {
+    if (!companyId || !memberPlan) return;
+    const updated = [...memberPlan.actions];
+    updated[idx] = { ...updated[idx], owner: newOwner };
+    await updateActions(companyId, memberPlan.id, updated);
+    setMemberPlan({ ...memberPlan, actions: updated });
   }
 
   async function handleAddNote() {
-    if (!companyId || !newNoteText.trim() || !currentPlan) return;
-    await addNote(companyId, currentPlan.id, currentPlan.notes, newNoteText.trim());
-    setActionPlans(actionPlans.map((p) => p.id === currentPlan.id ? { ...p, notes: [...p.notes, { text: newNoteText.trim(), createdAt: { toDate: () => new Date() } }] } : p) as ActionPlan[]);
+    if (!companyId || !newNoteText.trim() || !memberPlan) return;
+    await addNote(companyId, memberPlan.id, memberPlan.notes, newNoteText.trim());
+    setMemberPlan({ ...memberPlan, notes: [...memberPlan.notes, { text: newNoteText.trim(), createdAt: { toDate: () => new Date() } }] } as ActionPlan);
     setNewNoteText("");
+  }
+
+  async function handleGenerateActions(content: string) {
+    if (!companyId) return;
+    // Parse bullet points or numbered items from coaching response
+    const lines = content.split("\n").filter((l) => l.trim());
+    const actionLines = lines.filter((l) => /^[\s]*[-*•\d.]/.test(l)).map((l) => l.replace(/^[\s]*[-*•\d.)\]]+\s*/, "").trim()).filter((l) => l.length > 5);
+    if (actionLines.length === 0) {
+      // If no bullet points found, add the whole response as a single action
+      actionLines.push(content.slice(0, 200));
+    }
+    if (!window.confirm(`Add ${actionLines.length} action item${actionLines.length !== 1 ? "s" : ""} from coaching response?\n\n${actionLines.map((a) => "- " + a.slice(0, 80)).join("\n")}`)) return;
+
+    let plan = memberPlan;
+    if (!plan) {
+      const id = await createActionPlan(companyId, { memberId, memberName: member?.name ?? "" });
+      plan = { id, memberId, memberName: member?.name ?? "", actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
+    }
+    const newActions: ActionItem[] = actionLines.map((desc) => ({ description: desc, targetDate: "", completedAt: null, owner: profile?.displayName ?? "" }));
+    const allActions = [...plan.actions, ...newActions];
+    await updateActions(companyId, plan.id, allActions);
+    setMemberPlan({ ...plan, actions: allActions });
+  }
+
+  function buildCoachContext(): string {
+    const parts: string[] = [];
+    parts.push(`Team Member: ${member?.name ?? "Unknown"}`);
+    if (member?.role) parts.push(`Role: ${member.role}`);
+    if (team) parts.push(`Team: ${team.name}`);
+    if (latestAssessment) {
+      parts.push(`Performance Category: ${latestAssessment.performanceCategory} — ${CATEGORY_LABELS[latestAssessment.performanceCategory]}`);
+      parts.push(`Culture Fit Score: ${latestAssessment.cultureFitScore.toFixed(1)}`);
+      parts.push(`Productivity Score: ${latestAssessment.productivityScore.toFixed(1)}`);
+    }
+    if (openActions.length > 0) {
+      parts.push(`\nOpen Action Items:`);
+      openActions.forEach((a: ActionItem) => parts.push(`- ${a.description}${a.targetDate ? ` (due: ${a.targetDate})` : ""}`));
+    }
+    const recentNotes = (memberPlan?.notes ?? []).slice(0, 5);
+    if (recentNotes.length > 0) {
+      parts.push(`\nRecent Notes:`);
+      recentNotes.forEach((n) => parts.push(`- ${n.text}`));
+    }
+    return parts.join("\n");
   }
 
   async function handleAddTarget() {
@@ -334,47 +399,84 @@ export default function MemberSummaryPage() {
 
             {/* Action Items */}
             <div className="mt-6 rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-primary/40">Action Items — Q{currentFQ} FY{currentFY}</h2>
-              {openActions.map((a, i) => (
-                <div key={i} className="mt-2 flex items-center gap-3 rounded-[4px] border border-brand-gray/50 p-2.5">
-                  <input type="checkbox" checked={false} onChange={() => currentPlan && handleToggleAction(currentPlan.id, currentPlan.actions.indexOf(a))} className="h-4 w-4 accent-green-500" />
-                  <span className="flex-1 text-sm text-primary">{a.description}</span>
-                  {a.targetDate && <span className={`text-xs ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
-                </div>
-              ))}
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-primary/40">Action Items</h2>
+              {openActions.length === 0 && completedActions.length === 0 && (
+                <p className="mt-2 text-sm text-primary/40">No action items yet.</p>
+              )}
+              {openActions.map((a: ActionItem, i: number) => {
+                const actionIdx = memberPlan?.actions.indexOf(a) ?? -1;
+                return (
+                  <div key={i} className="mt-2 flex items-center gap-3 rounded-[4px] border border-brand-gray/50 p-2.5">
+                    <input type="checkbox" checked={false} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
+                    <span className="flex-1 text-sm text-primary">{a.description}</span>
+                    <select
+                      value={a.owner ?? ""}
+                      onChange={(e) => { if (actionIdx >= 0) handleChangeOwner(actionIdx, e.target.value); }}
+                      className="rounded-[2px] border border-brand-gray/50 bg-white px-1.5 py-0.5 text-[10px] text-primary/60 outline-none"
+                    >
+                      <option value="">Unassigned</option>
+                      {profile?.displayName && <option value={profile.displayName}>{profile.displayName}</option>}
+                      {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
+                    </select>
+                    {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
+                  </div>
+                );
+              })}
               {completedActions.length > 0 && (
                 <div className="mt-2">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/30">Completed</p>
-                  {completedActions.map((a, i) => (
-                    <div key={i} className="mt-1 flex items-center gap-3 rounded-[4px] border border-brand-gray/30 p-2.5 opacity-60">
-                      <input type="checkbox" checked={true} onChange={() => currentPlan && handleToggleAction(currentPlan.id, currentPlan.actions.indexOf(a))} className="h-4 w-4 accent-green-500" />
-                      <span className="flex-1 text-sm text-primary line-through">{a.description}</span>
-                    </div>
-                  ))}
+                  {completedActions.map((a: ActionItem, i: number) => {
+                    const actionIdx = memberPlan?.actions.indexOf(a) ?? -1;
+                    return (
+                      <div key={i} className="mt-1 flex items-center gap-3 rounded-[4px] border border-brand-gray/30 p-2.5 opacity-60">
+                        <input type="checkbox" checked={true} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
+                        <span className="flex-1 text-sm text-primary line-through">{a.description}</span>
+                        {a.owner && <span className="text-[10px] text-primary/30">{a.owner}</span>}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               <div className="mt-3 flex gap-2">
                 <input type="text" value={newActionDesc} onChange={(e) => setNewActionDesc(e.target.value)} placeholder="New action item..."
                   className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddAction(); }} />
+                <select
+                  value={newActionOwner}
+                  onChange={(e) => setNewActionOwner(e.target.value)}
+                  className="rounded-[4px] border border-brand-gray bg-white px-2 py-1.5 text-xs text-primary outline-none focus:border-primary"
+                >
+                  <option value="">{profile?.displayName ?? "Me"}</option>
+                  {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
+                </select>
                 <input type="date" value={newActionDate} onChange={(e) => setNewActionDate(e.target.value)} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                 <button onClick={handleAddAction} disabled={!newActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Add</button>
               </div>
-              {currentPlan && currentPlan.notes.length > 0 && (
+              {memberPlan && memberPlan.notes.length > 0 && (
                 <div className="mt-4 border-t border-brand-gray pt-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/30">Notes</p>
-                  {currentPlan.notes.map((n, i) => (
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/30">Coaching Notes</p>
+                  {[...memberPlan.notes].reverse().map((n, i) => (
                     <div key={i} className="mt-1 text-sm text-primary/70"><span className="text-[10px] text-primary/30">{n.createdAt?.toDate ? n.createdAt.toDate().toLocaleDateString() : ""} — </span>{n.text}</div>
                   ))}
                 </div>
               )}
-              {currentPlan && (
-                <div className="mt-3 flex gap-2">
-                  <input type="text" value={newNoteText} onChange={(e) => setNewNoteText(e.target.value)} placeholder="Add a note..."
-                    className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddNote(); }} />
-                  <button onClick={handleAddNote} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Add Note</button>
-                </div>
-              )}
+              <div className="mt-3 flex gap-2">
+                <input type="text" value={newNoteText} onChange={(e) => setNewNoteText(e.target.value)} placeholder="Add a coaching note..."
+                  className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddNote(); }} />
+                <button onClick={handleAddNote} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Add Note</button>
+              </div>
             </div>
+
+            {/* AskMike Coaches */}
+            {(peopleCoach || difficultCoach) && (
+              <div className="mt-4 flex flex-wrap gap-3">
+                {peopleCoach && (
+                  <AskMikeButton label="AskMike People Coach" onClick={() => { setActiveCoach(peopleCoach); setShowChat(true); }} />
+                )}
+                {difficultCoach && (
+                  <AskMikeButton label="AskMike Difficult Conversations Coach" onClick={() => { setActiveCoach(difficultCoach); setShowChat(true); }} />
+                )}
+              </div>
+            )}
 
             {/* Assessment History */}
             {assessments.length > 0 && (
@@ -627,6 +729,23 @@ export default function MemberSummaryPage() {
 
             <button onClick={handleAddTarget} className="mt-4 rounded-[4px] bg-accent px-6 py-3 font-semibold uppercase tracking-wider text-white transition hover:opacity-90">+ Add Target</button>
           </>
+        )}
+        {/* AskMike ChatPanel */}
+        {activeCoach && (
+          <ChatPanel
+            coachId={activeCoach.id}
+            coachName={activeCoach.name}
+            chatIntro={activeCoach.chatIntro}
+            context={buildCoachContext()}
+            isOpen={showChat}
+            onClose={() => setShowChat(false)}
+            userId={profile?.uid ?? ""}
+            userDisplayName={profile?.displayName ?? ""}
+            companyId={companyId ?? ""}
+            memberId={memberId}
+            memberName={member?.name ?? null}
+            onGenerateActions={activeCoach.name.toLowerCase().includes("people") ? handleGenerateActions : undefined}
+          />
         )}
       </div>
     </div>
