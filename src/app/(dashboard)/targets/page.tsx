@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { getAllTeamMembers } from "@/lib/team-service";
@@ -16,16 +16,20 @@ import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { TeamMember } from "@/types/team";
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues } from "@/types/productivity";
 import { DEFAULT_MONTHLY } from "@/types/productivity";
+import { formatNumber, stripCommas } from "@/lib/formatNumber";
 
 export default function ProductivityTargetsPage() {
   const { profile } = useAuth();
   const { activeCompany } = useCompany();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const preselectedMember = searchParams.get("member") ?? "";
 
   const companyId = activeCompany?.id ?? profile?.companyId;
 
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [selectedMemberId, setSelectedMemberId] = useState("");
+  const [selectedMemberId, setSelectedMemberId] = useState(preselectedMember);
+  const [memberSearch, setMemberSearch] = useState("");
   const [targets, setTargets] = useState<ProductivityTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingTargets, setLoadingTargets] = useState(false);
@@ -54,6 +58,9 @@ export default function ProductivityTargetsPage() {
     try {
       const data = await getAllTeamMembers(companyId);
       setTeamMembers(data);
+      if (preselectedMember && data.some((m) => m.id === preselectedMember)) {
+        loadTargets(preselectedMember);
+      }
     } catch {
       setError("Failed to load team members.");
     }
@@ -189,23 +196,39 @@ export default function ProductivityTargetsPage() {
 
         {error && <p className="mt-4 text-sm text-accent">{error}</p>}
 
-        {/* Member selector */}
+        {/* Member selector with search */}
         <div className="mt-6">
           <label className="text-xs font-semibold uppercase tracking-wider text-primary/40">
-            Select Team Member
+            Team Member
           </label>
-          <select
-            value={selectedMemberId}
-            onChange={(e) => handleSelectMember(e.target.value)}
+          <input
+            type="text"
+            value={memberSearch}
+            onChange={(e) => setMemberSearch(e.target.value)}
+            placeholder="Search team members..."
             className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary"
-          >
-            <option value="">Choose a team member...</option>
-            {teamMembers.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}{m.role ? ` — ${m.role}` : ""}
-              </option>
-            ))}
-          </select>
+          />
+          {(memberSearch || !selectedMemberId) && (
+            <div className="mt-1 max-h-40 overflow-y-auto rounded-[4px] border border-brand-gray bg-white shadow-sm">
+              {teamMembers
+                .filter((m) => !memberSearch || m.name.toLowerCase().includes(memberSearch.toLowerCase()) || (m.role && m.role.toLowerCase().includes(memberSearch.toLowerCase())))
+                .map((m) => (
+                  <button key={m.id} onClick={() => { handleSelectMember(m.id); setMemberSearch(""); }}
+                    className={`block w-full px-3 py-2 text-left text-sm transition hover:bg-primary/5 ${selectedMemberId === m.id ? "bg-primary/10 font-semibold text-primary" : "text-primary/70"}`}>
+                    {m.name}{m.role ? ` — ${m.role}` : ""}
+                  </button>
+                ))}
+              {teamMembers.filter((m) => !memberSearch || m.name.toLowerCase().includes(memberSearch.toLowerCase())).length === 0 && (
+                <p className="px-3 py-2 text-xs text-primary/40">No matches</p>
+              )}
+            </div>
+          )}
+          {selectedMemberId && !memberSearch && (
+            <p className="mt-1 text-xs text-primary/50">
+              Selected: <span className="font-semibold text-primary">{teamMembers.find((m) => m.id === selectedMemberId)?.name}</span>
+              <button onClick={() => { setSelectedMemberId(""); handleSelectMember(""); setMemberSearch(""); }} className="ml-2 text-accent hover:opacity-70">Change</button>
+            </p>
+          )}
         </div>
 
         {selectedMemberId && (
@@ -288,6 +311,10 @@ function UnitInput({
 }) {
   const prefix = unit === "dollars" ? "$" : "";
   const suffix = unit === "percentage" ? "%" : "";
+  // Display formatted, edit raw
+  const displayValue = disabled
+    ? formatNumber(value)
+    : typeof value === "number" ? formatNumber(value) : value;
   return (
     <div className="relative mt-1">
       {prefix && (
@@ -295,8 +322,8 @@ function UnitInput({
       )}
       <input
         type="text"
-        value={value}
-        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+        value={displayValue}
+        onChange={onChange ? (e) => onChange(stripCommas(e.target.value)) : undefined}
         disabled={disabled}
         placeholder={placeholder}
         className={`w-full rounded-[4px] border border-brand-gray px-3 py-2 text-sm outline-none focus:border-primary ${

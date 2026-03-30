@@ -26,10 +26,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   // For non-superadmin users, auto-load their company
+  // For superadmin, restore last selected company from localStorage
   useEffect(() => {
     if (!profile) return;
     if (profile.role !== "superadmin" && profile.companyId) {
       loadCompany(profile.companyId);
+    } else if (profile.role === "superadmin") {
+      const savedId = localStorage.getItem("tds-active-company");
+      if (savedId) loadCompany(savedId);
     }
   }, [profile]);
 
@@ -37,7 +41,10 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       const company = await getCompany(companyId);
-      setActiveCompany(company);
+      if (company) {
+        setActiveCompany(company);
+        localStorage.setItem("tds-active-company", companyId);
+      }
     } catch {
       // silently handle
     }
@@ -50,6 +57,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
 
   function clearActiveCompany() {
     setActiveCompany(null);
+    localStorage.removeItem("tds-active-company");
   }
 
   return (

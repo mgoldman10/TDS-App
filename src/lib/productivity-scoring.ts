@@ -1,4 +1,4 @@
-import type { ProductivityTarget, MonthlyValues } from "@/types/productivity";
+import type { ProductivityTarget, MonthlyValues, NullableMonthlyValues } from "@/types/productivity";
 
 /**
  * Bigger Is Better scoring:
@@ -37,45 +37,53 @@ function scorePeriod(
 
 /**
  * Calculate the adjusted score for a target.
- * For quarterly: single score from single actual.
- * For monthly: average of 3 monthly scores.
+ * For quarterly: single score from single actual (null = skip).
+ * For monthly: average only the months that have data (null months skipped).
  */
 export function calculateTargetScore(
   t: ProductivityTarget,
-  actual: number | MonthlyValues
-): { adjustedScore: number; weightedScore: number } {
+  actual: number | null | MonthlyValues | NullableMonthlyValues
+): { adjustedScore: number; weightedScore: number; hasData: boolean } {
   let adjustedScore: number;
+  let hasData = false;
 
-  if (t.frequency === "monthly" && t.monthlyTargets && typeof actual === "object") {
-    // Score each month independently, then average
+  if (t.frequency === "monthly" && t.monthlyTargets && typeof actual === "object" && actual !== null) {
+    // Score each month independently, then average only months with data
     const months = ["month1", "month2", "month3"] as const;
     let sum = 0;
+    let count = 0;
     for (const m of months) {
+      const mActual = (actual as NullableMonthlyValues)[m];
+      if (mActual === null || mActual === undefined) continue; // skip months without data
       const mTarget = t.monthlyTargets[m];
       const mMin = t.type === "bigger" ? (t.monthlyMin?.[m] ?? 0) : mTarget;
       const mMax = t.type === "smaller" ? (t.monthlyMax?.[m] ?? 0) : mTarget;
-      const mActual = actual[m];
       sum += scorePeriod(t.type, mTarget, mMin, mMax, mActual);
+      count++;
     }
-    adjustedScore = sum / 3;
-  } else {
+    adjustedScore = count > 0 ? sum / count : 0;
+    hasData = count > 0;
+  } else if (actual !== null && typeof actual === "number") {
     // Quarterly: single value
-    const act = typeof actual === "number" ? actual : 0;
-    adjustedScore = scorePeriod(t.type, t.target, t.min, t.max, act);
+    adjustedScore = scorePeriod(t.type, t.target, t.min, t.max, actual);
+    hasData = true;
+  } else {
+    adjustedScore = 0;
+    hasData = false;
   }
 
   const weightedScore = (t.weight / 100) * adjustedScore;
-  return { adjustedScore, weightedScore };
+  return { adjustedScore, weightedScore, hasData };
 }
 
 /** Calculate total productivity score from all targets + actuals */
 export function calculateTotalProductivityScore(
   targets: ProductivityTarget[],
-  actuals: Record<string, number | MonthlyValues>
+  actuals: Record<string, number | null | MonthlyValues | NullableMonthlyValues>
 ): number {
   let total = 0;
   for (const t of targets) {
-    const actual = actuals[t.id] ?? 0;
+    const actual = actuals[t.id] ?? null;
     const { weightedScore } = calculateTargetScore(t, actual);
     total += weightedScore;
   }

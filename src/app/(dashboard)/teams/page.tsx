@@ -56,6 +56,9 @@ export default function TeamsPage() {
   const [newSubTeamLeader, setNewSubTeamLeader] = useState("");
   const [newSubTeamLeaderTitle, setNewSubTeamLeaderTitle] = useState("");
 
+  // Search
+  const [searchQuery, setSearchQuery] = useState("");
+
   // Editing team (name + leader)
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [editTeamName, setEditTeamName] = useState("");
@@ -140,10 +143,12 @@ export default function TeamsPage() {
   }
 
   // Get sub-team leaders who should appear as members of this team
+  // Exclude anyone already added as a regular team member
   function getLeadersAsMembers(teamId: string): { name: string; title: string; subTeamName: string }[] {
     const childTeams = teams.filter((t) => t.parentTeamId === teamId);
+    const existingMemberNames = new Set((members[teamId] || []).map((m) => m.name));
     return childTeams
-      .filter((t) => t.leaderName)
+      .filter((t) => t.leaderName && !existingMemberNames.has(t.leaderName))
       .map((t) => ({ name: t.leaderName, title: t.leaderTitle || "", subTeamName: t.name }));
   }
 
@@ -428,13 +433,21 @@ export default function TeamsPage() {
                 <div className={`space-y-1 ${leaderMembers.length > 0 ? "mt-1" : ""}`}>
                   {teamMembers.map((m) => {
                     const isEditing = editingMemberId === m.id;
+                    const leadsTeams = childTeams.filter((ct) => ct.leaderName === m.name);
                     return (
                       <div key={m.id} className="rounded-[4px] border border-brand-gray/50 bg-white">
                         <div className="flex items-center gap-3 p-2.5">
                           <div className="flex-1">
-                            <span className="text-sm font-semibold text-primary">{m.name}</span>
+                            <button onClick={() => router.push(`/members/${m.id}`)} className="text-sm font-semibold text-primary transition hover:text-accent">
+                              {m.name}
+                            </button>
                             {m.role && <span className="ml-2 text-xs text-primary/50">{m.role}</span>}
                           </div>
+                          {leadsTeams.map((lt) => (
+                            <span key={lt.id} className="rounded-[2px] bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-blue-700">
+                              Leads {lt.name}
+                            </span>
+                          ))}
                           {m.isAppUser && (
                             <span className="rounded-[2px] bg-green-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-green-700">
                               App User
@@ -601,8 +614,44 @@ export default function TeamsPage() {
       <div className="mx-auto max-w-3xl">
         <h1 className="text-2xl font-bold text-primary">Teams & Members</h1>
         <p className="mt-1 text-sm text-primary/50">
-          Organize your team hierarchy. Leaders automatically appear as members of their parent team.
+          Organize your team hierarchy. Click a member name to view their profile.
         </p>
+
+        {/* Search */}
+        <div className="mt-4">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search team members..."
+            className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary"
+          />
+          {searchQuery.trim() && (() => {
+            const q = searchQuery.toLowerCase();
+            const allMembers: { id: string; name: string; role: string; teamName: string }[] = [];
+            for (const teamId of Object.keys(members)) {
+              const t = teams.find((x) => x.id === teamId);
+              for (const m of members[teamId]) {
+                if (m.name.toLowerCase().includes(q) || (m.role && m.role.toLowerCase().includes(q))) {
+                  allMembers.push({ id: m.id, name: m.name, role: m.role, teamName: t?.name ?? "" });
+                }
+              }
+            }
+            if (allMembers.length === 0) return <p className="mt-2 text-xs text-primary/40">No matches found.</p>;
+            return (
+              <div className="mt-2 rounded-[4px] border border-brand-gray bg-white shadow-sm">
+                {allMembers.map((m) => (
+                  <button key={m.id} onClick={() => router.push(`/members/${m.id}`)}
+                    className="flex w-full items-center gap-3 border-b border-brand-gray/30 px-3 py-2.5 text-left transition hover:bg-primary/5 last:border-0">
+                    <span className="text-sm font-semibold text-primary">{m.name}</span>
+                    {m.role && <span className="text-xs text-primary/50">{m.role}</span>}
+                    <span className="ml-auto text-[10px] text-primary/30">{m.teamName}</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
 
         {error && <p className="mt-4 text-sm text-accent">{error}</p>}
 

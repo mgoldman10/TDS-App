@@ -10,6 +10,13 @@ export interface MonthlyValues {
   month3: number;
 }
 
+/** Monthly values where null means "no data yet" (distinct from 0) */
+export interface NullableMonthlyValues {
+  month1: number | null;
+  month2: number | null;
+  month3: number | null;
+}
+
 export interface ProductivityTarget {
   id: string;
   memberId: string;

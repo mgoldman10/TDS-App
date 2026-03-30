@@ -236,9 +236,9 @@ AskMike buttons always use: `bg-accent text-white rounded-full font-semibold upp
 - [x] Company Settings
 - [x] Teams & Team Members
 - [x] Productivity Targets (Job Scorecard)
-- [ ] Assessment entry
-- [ ] Talent Assessment Summary
-- [ ] Action Plans
+- [x] Assessment entry
+- [x] Talent Assessment Summary
+- [x] Action Plans
 - [ ] QTAM workflow
 - [ ] Dashboard
 - [ ] Reporting / TDI trends

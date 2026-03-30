@@ -18,10 +18,8 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Teams & Members", href: "/teams", companyScoped: true },
-  { label: "Productivity Targets", href: "/targets", companyScoped: true },
-  { label: "Assessments", href: "/assessments", companyScoped: true },
+  { label: "Team Member Details", href: "/members", companyScoped: true },
   { label: "Talent Summary", href: "/talent-summary", companyScoped: true },
-  { label: "Action Plans", href: "/action-plans", companyScoped: true },
   { label: "Reports", href: "/reports", minRole: "senior_leader", companyScoped: true },
   { label: "AskMike", href: "/askmike" },
   { label: "Core Values", href: "/core-values", minRole: "company_admin", companyScoped: true },

@@ -25,6 +25,7 @@ export async function getCompanies(): Promise<Company[]> {
 export async function createCompany(name: string): Promise<string> {
   const ref = await addDoc(collection(db, "companies"), {
     name,
+    fiscalYearStartMonth: 1,
     scoringParameters: { ...DEFAULT_SCORING_PARAMETERS },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -34,7 +35,7 @@ export async function createCompany(name: string): Promise<string> {
 
 export async function updateCompany(
   companyId: string,
-  data: Partial<Pick<Company, "name" | "scoringParameters">>
+  data: Partial<Pick<Company, "name" | "fiscalYearStartMonth" | "scoringParameters">>
 ): Promise<void> {
   await updateDoc(doc(db, "companies", companyId), {
     ...data,
