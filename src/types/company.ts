@@ -42,11 +42,17 @@ export const DEFAULT_SCORING_PARAMETERS: ScoringParameters = {
   cultureFitCaps: { ...DEFAULT_CULTURE_FIT_CAPS },
 };
 
+export interface TdiGoals {
+  company?: number;                    // target TDI for the whole company (e.g., 50 = +50%)
+  teams?: Record<string, number>;      // teamId → target TDI
+}
+
 export interface Company {
   id: string;
   name: string;
   fiscalYearStartMonth: number; // 1-12, default 1 (January)
   scoringParameters: ScoringParameters;
+  tdiGoals?: TdiGoals;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

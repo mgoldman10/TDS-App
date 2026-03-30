@@ -92,6 +92,18 @@ export async function updateAssessment(
   });
 }
 
+/** Get all assessments for a company across all quarters */
+export async function getAllAssessmentsForCompany(
+  companyId: string
+): Promise<Assessment[]> {
+  const q = query(
+    assessmentsRef(companyId),
+    orderBy("fiscalYear", "desc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Assessment));
+}
+
 /** Get all assessments for a specific member (history) */
 export async function getAssessmentHistory(
   companyId: string,

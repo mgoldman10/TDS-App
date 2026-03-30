@@ -34,6 +34,18 @@ export async function getActionPlanForMember(
   return { id: snap.docs[0].id, ...snap.docs[0].data() } as ActionPlan;
 }
 
+/** Get all action plans for a company (across all members) */
+export async function getAllActionPlans(
+  companyId: string
+): Promise<ActionPlan[]> {
+  const q = query(
+    plansRef(companyId),
+    orderBy("memberName", "asc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ActionPlan));
+}
+
 export async function createActionPlan(
   companyId: string,
   data: {

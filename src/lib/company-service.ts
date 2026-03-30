@@ -35,7 +35,7 @@ export async function createCompany(name: string): Promise<string> {
 
 export async function updateCompany(
   companyId: string,
-  data: Partial<Pick<Company, "name" | "fiscalYearStartMonth" | "scoringParameters">>
+  data: Partial<Pick<Company, "name" | "fiscalYearStartMonth" | "scoringParameters" | "tdiGoals">>
 ): Promise<void> {
   await updateDoc(doc(db, "companies", companyId), {
     ...data,

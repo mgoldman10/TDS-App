@@ -231,6 +231,14 @@ export default function MemberSummaryPage() {
     setMemberPlan({ ...memberPlan, actions: updated });
   }
 
+  async function handleDeleteAction(idx: number) {
+    if (!companyId || !memberPlan) return;
+    if (!window.confirm("Delete this action item? This cannot be undone.")) return;
+    const updated = memberPlan.actions.filter((_, i) => i !== idx);
+    await updateActions(companyId, memberPlan.id, updated);
+    setMemberPlan({ ...memberPlan, actions: updated });
+  }
+
   async function handleChangeOwner(idx: number, newOwner: string) {
     if (!companyId || !memberPlan) return;
     const updated = [...memberPlan.actions];
@@ -274,17 +282,50 @@ export default function MemberSummaryPage() {
     if (member?.role) parts.push(`Role: ${member.role}`);
     if (team) parts.push(`Team: ${team.name}`);
     if (latestAssessment) {
-      parts.push(`Performance Category: ${latestAssessment.performanceCategory} — ${CATEGORY_LABELS[latestAssessment.performanceCategory]}`);
-      parts.push(`Culture Fit Score: ${latestAssessment.cultureFitScore.toFixed(1)}`);
-      parts.push(`Productivity Score: ${latestAssessment.productivityScore.toFixed(1)}`);
+      parts.push(`\nPerformance Category: ${latestAssessment.performanceCategory} — ${CATEGORY_LABELS[latestAssessment.performanceCategory]}`);
+      parts.push(`Overall Culture Fit Score: ${latestAssessment.cultureFitScore.toFixed(1)}`);
+      parts.push(`Overall Productivity Score: ${latestAssessment.productivityScore.toFixed(1)}`);
+
+      // Detailed core value ratings
+      if (latestAssessment.cultureFitScores.length > 0) {
+        parts.push(`\nCulture Fit — Core Value Ratings:`);
+        latestAssessment.cultureFitScores.forEach((cfs) => {
+          parts.push(`- ${cfs.coreValueName}: ${RATING_LABELS[cfs.rating]} (${ratingScores[cfs.rating]})`);
+        });
+      }
+
+      // Detailed productivity targets and actuals
+      if (latestAssessment.productivityActuals.length > 0) {
+        parts.push(`\nProductivity — Targets & Actuals:`);
+        latestAssessment.productivityActuals.forEach((pa) => {
+          const t = targets.find((tgt) => tgt.id === pa.targetId);
+          const prefix = t?.unit === "dollars" ? "$" : "";
+          const suffix = t?.unit === "percentage" ? "%" : "";
+          if (t) {
+            if (t.frequency === "monthly" && pa.monthlyActuals) {
+              const m1 = pa.monthlyActuals.month1;
+              const m2 = pa.monthlyActuals.month2;
+              const m3 = pa.monthlyActuals.month3;
+              parts.push(`- ${pa.targetName} (Weight: ${t.weight}%, Monthly):`);
+              parts.push(`    Month 1: Actual ${prefix}${m1 ?? "N/A"}${suffix}, Target ${prefix}${t.monthlyTargets?.month1 ?? 0}${suffix}`);
+              parts.push(`    Month 2: Actual ${prefix}${m2 ?? "N/A"}${suffix}, Target ${prefix}${t.monthlyTargets?.month2 ?? 0}${suffix}`);
+              parts.push(`    Month 3: Actual ${prefix}${m3 ?? "N/A"}${suffix}, Target ${prefix}${t.monthlyTargets?.month3 ?? 0}${suffix}`);
+            } else {
+              parts.push(`- ${pa.targetName} (Weight: ${t.weight}%): Actual ${prefix}${pa.actual ?? "N/A"}${suffix}, Target ${prefix}${t.target}${suffix}`);
+            }
+          } else {
+            parts.push(`- ${pa.targetName}: Actual ${pa.actual ?? "N/A"}`);
+          }
+        });
+      }
     }
     if (openActions.length > 0) {
       parts.push(`\nOpen Action Items:`);
-      openActions.forEach((a: ActionItem) => parts.push(`- ${a.description}${a.targetDate ? ` (due: ${a.targetDate})` : ""}`));
+      openActions.forEach((a: ActionItem) => parts.push(`- ${a.description}${a.owner ? ` (owner: ${a.owner})` : ""}${a.targetDate ? ` (due: ${a.targetDate})` : ""}`));
     }
     const recentNotes = (memberPlan?.notes ?? []).slice(0, 5);
     if (recentNotes.length > 0) {
-      parts.push(`\nRecent Notes:`);
+      parts.push(`\nRecent Coaching Notes:`);
       recentNotes.forEach((n) => parts.push(`- ${n.text}`));
     }
     return parts.join("\n");
@@ -419,6 +460,7 @@ export default function MemberSummaryPage() {
                       {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
                     </select>
                     {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
+                    <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>
                   </div>
                 );
               })}
@@ -432,6 +474,7 @@ export default function MemberSummaryPage() {
                         <input type="checkbox" checked={true} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
                         <span className="flex-1 text-sm text-primary line-through">{a.description}</span>
                         {a.owner && <span className="text-[10px] text-primary/30">{a.owner}</span>}
+                        <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>
                       </div>
                     );
                   })}
