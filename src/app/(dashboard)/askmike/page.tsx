@@ -67,14 +67,22 @@ export default function AskMikePage() {
               AI-powered coaching to help you take the right actions with your team members.
             </p>
           </div>
-          {profile?.role === "superadmin" && (
+          <div className="flex gap-2">
             <Link
-              href="/askmike/admin"
+              href="/askmike/transcripts"
               className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-4 py-2 text-sm font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white"
             >
-              Manage Coaches
+              Transcripts
             </Link>
-          )}
+            {profile?.role === "superadmin" && (
+              <Link
+                href="/askmike/admin"
+                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-4 py-2 text-sm font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white"
+              >
+                Manage Coaches
+              </Link>
+            )}
+          </div>
         </div>
 
         {/* Coaches */}

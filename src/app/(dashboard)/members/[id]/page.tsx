@@ -254,28 +254,6 @@ export default function MemberSummaryPage() {
     setNewNoteText("");
   }
 
-  async function handleGenerateActions(content: string) {
-    if (!companyId) return;
-    // Parse bullet points or numbered items from coaching response
-    const lines = content.split("\n").filter((l) => l.trim());
-    const actionLines = lines.filter((l) => /^[\s]*[-*•\d.]/.test(l)).map((l) => l.replace(/^[\s]*[-*•\d.)\]]+\s*/, "").trim()).filter((l) => l.length > 5);
-    if (actionLines.length === 0) {
-      // If no bullet points found, add the whole response as a single action
-      actionLines.push(content.slice(0, 200));
-    }
-    if (!window.confirm(`Add ${actionLines.length} action item${actionLines.length !== 1 ? "s" : ""} from coaching response?\n\n${actionLines.map((a) => "- " + a.slice(0, 80)).join("\n")}`)) return;
-
-    let plan = memberPlan;
-    if (!plan) {
-      const id = await createActionPlan(companyId, { memberId, memberName: member?.name ?? "" });
-      plan = { id, memberId, memberName: member?.name ?? "", actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
-    }
-    const newActions: ActionItem[] = actionLines.map((desc) => ({ description: desc, targetDate: "", completedAt: null, owner: profile?.displayName ?? "" }));
-    const allActions = [...plan.actions, ...newActions];
-    await updateActions(companyId, plan.id, allActions);
-    setMemberPlan({ ...plan, actions: allActions });
-  }
-
   function buildCoachContext(): string {
     const parts: string[] = [];
     parts.push(`Team Member: ${member?.name ?? "Unknown"}`);

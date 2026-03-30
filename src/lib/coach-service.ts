@@ -180,6 +180,25 @@ export async function getUserTranscripts(
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Transcript));
 }
 
+/** Get all transcripts (superadmin) */
+export async function getAllTranscripts(): Promise<Transcript[]> {
+  const q = query(transcriptsRef(), orderBy("createdAt", "desc"), limit(100));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Transcript));
+}
+
+/** Get transcripts for a specific user (all coaches) */
+export async function getTranscriptsForUser(userId: string): Promise<Transcript[]> {
+  const q = query(
+    transcriptsRef(),
+    where("userId", "==", userId),
+    orderBy("createdAt", "desc"),
+    limit(50)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Transcript));
+}
+
 // Reference Document CRUD
 export async function getReferenceDocuments(): Promise<ReferenceDocument[]> {
   const q = query(refDocsRef(), orderBy("createdAt", "desc"));
