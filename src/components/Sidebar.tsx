@@ -56,7 +56,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       {/* Logo */}
       <div className="px-6 py-6">
         <Link href="/dashboard" className="text-lg font-extrabold tracking-tight text-white">
-          Talent Density
+          Talent Density Systems
         </Link>
       </div>
 

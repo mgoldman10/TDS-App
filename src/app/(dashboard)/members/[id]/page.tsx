@@ -787,7 +787,7 @@ export default function MemberSummaryPage() {
             companyId={companyId ?? ""}
             memberId={memberId}
             memberName={member?.name ?? null}
-            onGenerateActions={activeCoach.name.toLowerCase().includes("people") ? handleGenerateActions : undefined}
+            onGenerateActions={undefined}
           />
         )}
       </div>
