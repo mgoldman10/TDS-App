@@ -15,18 +15,43 @@ interface NavItem {
   companyScoped?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard", href: "/dashboard" },
-  { label: "Teams & Members", href: "/teams", companyScoped: true },
-  { label: "Team Member Details", href: "/members", companyScoped: true },
-  { label: "Talent Summary", href: "/talent-summary", companyScoped: true },
-  { label: "Reports", href: "/reports", minRole: "senior_leader", companyScoped: true },
-  { label: "AskMike", href: "/askmike" },
-  { label: "Core Values", href: "/core-values", minRole: "company_admin", companyScoped: true },
-  { label: "Help", href: "/help" },
-  { label: "Users", href: "/settings/users", minRole: "company_admin", companyScoped: true },
-  { label: "Company Settings", href: "/settings/company", minRole: "company_admin", companyScoped: true },
-  { label: "Admin", href: "/admin", superadminOnly: true },
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "My Work",
+    items: [
+      { label: "Dashboard", href: "/dashboard" },
+      { label: "Team Member Details", href: "/members", companyScoped: true },
+      { label: "AskMike", href: "/askmike" },
+    ],
+  },
+  {
+    label: "Team",
+    items: [
+      { label: "Teams & Members", href: "/teams", companyScoped: true },
+      { label: "Talent Summary", href: "/talent-summary", companyScoped: true },
+      { label: "Reports", href: "/reports", minRole: "senior_leader", companyScoped: true },
+    ],
+  },
+  {
+    label: "Setup",
+    items: [
+      { label: "Core Values", href: "/core-values", minRole: "company_admin", companyScoped: true },
+      { label: "Company Settings", href: "/settings/company", minRole: "company_admin", companyScoped: true },
+      { label: "Users", href: "/settings/users", minRole: "company_admin", companyScoped: true },
+    ],
+  },
+  {
+    label: "",
+    items: [
+      { label: "Help", href: "/help" },
+      { label: "Admin", href: "/admin", superadminOnly: true },
+    ],
+  },
 ];
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
@@ -89,30 +114,48 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3">
-        <ul className="space-y-1">
-          {NAV_ITEMS.filter(isVisible).map((item) => {
-            const active = isActive(item.href);
-            return (
-              <li key={item.href}>
-                <Link
-                  href={item.href}
-                  onClick={onNavigate}
-                  className={`block rounded-[4px] px-3 py-2 text-sm font-semibold uppercase tracking-wider transition ${
-                    active
-                      ? "bg-white/10 text-white"
-                      : "text-white/60 hover:bg-white/5 hover:text-white"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+        {NAV_GROUPS.map((group, groupIdx) => {
+          const visibleItems = group.items.filter(isVisible);
+          if (visibleItems.length === 0) return null;
+          const isFirst = groupIdx === 0;
+          return (
+            <div key={group.label || "_bottom"} className="mb-3">
+              {group.label && (
+                <>
+                  {!isFirst && <div className="mx-3 mb-2 mt-1 border-t-2 border-white/20" />}
+                  <p className={`mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-white/50 ${isFirst ? "pt-0" : ""}`}>
+                    {group.label}
+                  </p>
+                </>
+              )}
+              {!group.label && !isFirst && <div className="mx-3 mb-2 mt-1 border-t-2 border-white/20" />}
+              <ul className="space-y-0.5">
+                {visibleItems.map((item) => {
+                  const active = isActive(item.href);
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        onClick={onNavigate}
+                        className={`block rounded-[4px] px-3 py-2 text-sm font-semibold uppercase tracking-wider transition ${
+                          active
+                            ? "bg-white/10 text-white"
+                            : "text-white/60 hover:bg-white/5 hover:text-white"
+                        }`}
+                      >
+                        {item.label}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
       </nav>
 
       {/* User & Theme & Sign Out */}
-      <div className="border-t border-white/10 px-4 py-4">
+      <div className="border-t-2 border-white/20 px-4 py-4">
         <p className="truncate text-xs font-light text-white/50">
           {profile.displayName || profile.email}
         </p>

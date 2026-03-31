@@ -141,7 +141,7 @@ export default function ChatPanel({
       <div className="flex-1 bg-primary/30" onClick={onClose} />
 
       {/* Panel */}
-      <div className="flex h-full w-[480px] flex-col border-l border-brand-gray bg-white shadow-lg">
+      <div className="flex h-full w-full sm:w-[480px] flex-col border-l border-brand-gray bg-white shadow-lg">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-brand-gray bg-accent px-4 py-3">
           <div className="flex items-center gap-3">

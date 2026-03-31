@@ -475,7 +475,7 @@ export default function ReportsPage() {
 
                 {/* Bar chart */}
                 <div className="mt-4 rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
-                  <ResponsiveContainer width="100%" height={Math.max(200, comparisonData.length * 40)}>
+                  <ResponsiveContainer width="100%" height={Math.max(200, Math.min(comparisonData.length * 40, 500))}>
                     <BarChart data={comparisonData} layout="vertical">
                       <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
                       <XAxis type="number" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v}%`} />

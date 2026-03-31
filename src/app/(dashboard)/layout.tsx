@@ -33,7 +33,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ☰
         </button>
         <span className="text-sm font-extrabold tracking-tight text-white">
-          Talent Density
+          Talent Density Systems
         </span>
         <div className="w-8" />
       </div>

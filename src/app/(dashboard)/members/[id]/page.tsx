@@ -386,7 +386,7 @@ export default function MemberSummaryPage() {
           <>
             {/* Score cards */}
             {latestAssessment && (
-              <div className="mt-6 grid grid-cols-2 gap-4">
+              <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Culture Fit</p>
                   <p className="mt-1 text-2xl font-bold text-primary">{latestAssessment.cultureFitScore.toFixed(1)}</p>
@@ -458,19 +458,21 @@ export default function MemberSummaryPage() {
                   })}
                 </div>
               )}
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 flex flex-col sm:flex-row gap-2">
                 <input type="text" value={newActionDesc} onChange={(e) => setNewActionDesc(e.target.value)} placeholder="New action item..."
                   className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddAction(); }} />
-                <select
-                  value={newActionOwner}
-                  onChange={(e) => setNewActionOwner(e.target.value)}
-                  className="rounded-[4px] border border-brand-gray bg-white px-2 py-1.5 text-xs text-primary outline-none focus:border-primary"
-                >
-                  <option value="">{profile?.displayName ?? "Me"}</option>
-                  {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
-                </select>
-                <input type="date" value={newActionDate} onChange={(e) => setNewActionDate(e.target.value)} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                <button onClick={handleAddAction} disabled={!newActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Add</button>
+                <div className="flex gap-2">
+                  <select
+                    value={newActionOwner}
+                    onChange={(e) => setNewActionOwner(e.target.value)}
+                    className="flex-1 sm:flex-none rounded-[4px] border border-brand-gray bg-white px-2 py-1.5 text-xs text-primary outline-none focus:border-primary"
+                  >
+                    <option value="">{profile?.displayName ?? "Me"}</option>
+                    {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
+                  </select>
+                  <input type="date" value={newActionDate} onChange={(e) => setNewActionDate(e.target.value)} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                  <button onClick={handleAddAction} disabled={!newActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add</button>
+                </div>
               </div>
               {memberPlan && memberPlan.notes.length > 0 && (
                 <div className="mt-4 border-t border-brand-gray pt-3">
@@ -480,10 +482,10 @@ export default function MemberSummaryPage() {
                   ))}
                 </div>
               )}
-              <div className="mt-3 flex gap-2">
+              <div className="mt-3 flex flex-col sm:flex-row gap-2">
                 <input type="text" value={newNoteText} onChange={(e) => setNewNoteText(e.target.value)} placeholder="Add a coaching note..."
                   className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddNote(); }} />
-                <button onClick={handleAddNote} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Add Note</button>
+                <button onClick={handleAddNote} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add Note</button>
               </div>
             </div>
 

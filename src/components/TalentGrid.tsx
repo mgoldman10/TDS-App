@@ -148,7 +148,7 @@ export default function TalentGrid({ assessments, scoringParams, privacyMode, on
       <svg
         viewBox={`0 0 ${TOTAL_W} ${TOTAL_H}`}
         className="w-full max-w-[600px]"
-        style={{ minWidth: 450 }}
+        style={{ minWidth: 300 }}
       >
         {/* Zone backgrounds */}
         {/* LCF — bottom band, full width */}

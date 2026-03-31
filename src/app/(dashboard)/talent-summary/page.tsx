@@ -210,7 +210,7 @@ export default function TalentSummaryPage() {
             </p>
           </div>
         ) : (
-          <div className="mt-6 flex gap-6 items-start">
+          <div className="mt-6 flex flex-col lg:flex-row gap-6 items-start">
             {/* The Grid */}
             <div className="flex-1 min-w-0">
               <TalentGrid
@@ -224,7 +224,7 @@ export default function TalentSummaryPage() {
             </div>
 
             {/* TDI + Category Stats — right side */}
-            <div className="w-48 flex-shrink-0 space-y-4">
+            <div className="w-full lg:w-48 flex-shrink-0 space-y-4">
               {/* TDI */}
               <div className="rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">

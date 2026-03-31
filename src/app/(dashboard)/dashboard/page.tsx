@@ -190,7 +190,7 @@ export default function DashboardPage() {
         </p>
 
         {/* TDI + Category Counts */}
-        <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
           {/* TDI Score */}
           <div className="col-span-2 rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm lg:col-span-1">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">TDI</p>
@@ -261,43 +261,63 @@ export default function DashboardPage() {
             <p className="mt-3 text-sm text-primary/40">No open action items across your team.</p>
           ) : (
             <div className="mt-3">
-              {/* Header */}
-              {/* Header */}
-              <div className="grid grid-cols-12 gap-2 border-b border-brand-gray pb-2 items-center">
+              {/* Desktop header — hidden on mobile */}
+              <div className="hidden sm:grid grid-cols-12 gap-2 border-b border-brand-gray pb-2 items-center">
                 <span className="col-span-1 text-[10px] font-semibold uppercase tracking-wider text-primary/30">Done</span>
                 <span className="col-span-2 text-[10px] font-semibold uppercase tracking-wider text-primary/30">Team Member</span>
                 <span className="col-span-4 text-[10px] font-semibold uppercase tracking-wider text-primary/30">Action</span>
                 <span className="col-span-2 text-[10px] font-semibold uppercase tracking-wider text-primary/30">Owner</span>
                 <span className="col-span-3 text-[10px] font-semibold uppercase tracking-wider text-primary/30">Due Date</span>
               </div>
-              {/* Rows */}
+              {/* Rows — card on mobile, grid on desktop */}
               {actionItems.map((a, i) => {
                 const isOverdue = a.targetDate && a.targetDate < todayISO;
                 return (
-                  <div key={i} className={`grid grid-cols-12 gap-2 border-b border-brand-gray/30 py-2 items-center ${isOverdue ? "bg-accent/5" : ""}`}>
-                    <div className="col-span-1 flex justify-center">
-                      <input type="checkbox" checked={false} onChange={() => handleToggleAction(a.planId, a.actionIdx)} className="h-4 w-4 accent-green-500 cursor-pointer" />
+                  <div key={i} className={`border-b border-brand-gray/30 py-2 ${isOverdue ? "bg-accent/5" : ""}`}>
+                    {/* Desktop row */}
+                    <div className="hidden sm:grid grid-cols-12 gap-2 items-center">
+                      <div className="col-span-1 flex justify-center">
+                        <input type="checkbox" checked={false} onChange={() => handleToggleAction(a.planId, a.actionIdx)} className="h-4 w-4 accent-green-500 cursor-pointer" />
+                      </div>
+                      <button onClick={() => router.push(`/members/${a.memberId}`)} className="col-span-2 text-left text-xs font-semibold text-primary transition hover:text-accent truncate">
+                        {a.memberName}
+                      </button>
+                      <span className="col-span-4 text-xs text-primary/70 truncate">{a.description}</span>
+                      <div className="col-span-2">
+                        <select value={a.owner} onChange={(e) => handleChangeOwner(a.planId, a.actionIdx, e.target.value)}
+                          className="w-full rounded-[2px] border border-brand-gray/50 bg-white px-1 py-0.5 text-[10px] text-primary/60 outline-none truncate">
+                          <option value="">Unassigned</option>
+                          {profile?.displayName && <option value={profile.displayName}>{profile.displayName}</option>}
+                          {a.memberName !== profile?.displayName && <option value={a.memberName}>{a.memberName}</option>}
+                          {a.owner && a.owner !== profile?.displayName && a.owner !== a.memberName && <option value={a.owner}>{a.owner}</option>}
+                        </select>
+                      </div>
+                      <span className={`col-span-3 text-xs ${isOverdue ? "font-semibold text-accent" : "text-primary/50"}`}>
+                        {a.targetDate ? new Date(a.targetDate + "T00:00:00").toLocaleDateString() : "—"}
+                        {isOverdue && <span className="ml-2 rounded-[2px] bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent">Overdue</span>}
+                      </span>
                     </div>
-                    <button onClick={() => router.push(`/members/${a.memberId}`)} className="col-span-2 text-left text-xs font-semibold text-primary transition hover:text-accent truncate">
-                      {a.memberName}
-                    </button>
-                    <span className="col-span-4 text-xs text-primary/70 truncate">{a.description}</span>
-                    <div className="col-span-2">
-                      <select
-                        value={a.owner}
-                        onChange={(e) => handleChangeOwner(a.planId, a.actionIdx, e.target.value)}
-                        className="w-full rounded-[2px] border border-brand-gray/50 bg-white px-1 py-0.5 text-[10px] text-primary/60 outline-none truncate"
-                      >
-                        <option value="">Unassigned</option>
-                        {profile?.displayName && <option value={profile.displayName}>{profile.displayName}</option>}
-                        {a.memberName !== profile?.displayName && <option value={a.memberName}>{a.memberName}</option>}
-                        {a.owner && a.owner !== profile?.displayName && a.owner !== a.memberName && <option value={a.owner}>{a.owner}</option>}
-                      </select>
+                    {/* Mobile card */}
+                    <div className="sm:hidden flex items-start gap-3 px-1">
+                      <input type="checkbox" checked={false} onChange={() => handleToggleAction(a.planId, a.actionIdx)} className="mt-1 h-4 w-4 accent-green-500 cursor-pointer flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <button onClick={() => router.push(`/members/${a.memberId}`)} className="text-xs font-semibold text-primary transition hover:text-accent">{a.memberName}</button>
+                        <p className="text-xs text-primary/70 mt-0.5">{a.description}</p>
+                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                          <select value={a.owner} onChange={(e) => handleChangeOwner(a.planId, a.actionIdx, e.target.value)}
+                            className="rounded-[2px] border border-brand-gray/50 bg-white px-1 py-0.5 text-[10px] text-primary/60 outline-none">
+                            <option value="">Unassigned</option>
+                            {profile?.displayName && <option value={profile.displayName}>{profile.displayName}</option>}
+                            {a.memberName !== profile?.displayName && <option value={a.memberName}>{a.memberName}</option>}
+                            {a.owner && a.owner !== profile?.displayName && a.owner !== a.memberName && <option value={a.owner}>{a.owner}</option>}
+                          </select>
+                          <span className={`text-[10px] ${isOverdue ? "font-semibold text-accent" : "text-primary/40"}`}>
+                            {a.targetDate ? new Date(a.targetDate + "T00:00:00").toLocaleDateString() : "No date"}
+                            {isOverdue && " — Overdue"}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <span className={`col-span-3 text-xs ${isOverdue ? "font-semibold text-accent" : "text-primary/50"}`}>
-                      {a.targetDate ? new Date(a.targetDate + "T00:00:00").toLocaleDateString() : "—"}
-                      {isOverdue && <span className="ml-2 rounded-[2px] bg-accent/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-accent">Overdue</span>}
-                    </span>
                   </div>
                 );
               })}
