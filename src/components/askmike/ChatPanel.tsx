@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { saveTranscript, getUserTranscripts } from "@/lib/coach-service";
+import { anonymize, deanonymize } from "@/lib/anonymize";
 import type { ChatMessage, Transcript } from "@/types/coach";
+import type { NameMapping } from "@/lib/anonymize";
 
 interface Props {
   coachId: string;
@@ -16,6 +18,7 @@ interface Props {
   companyId: string;
   memberId?: string | null;
   memberName?: string | null;
+  nameMapping?: NameMapping[];
   onGenerateActions?: (content: string) => void;
 }
 
@@ -31,6 +34,7 @@ export default function ChatPanel({
   companyId,
   memberId = null,
   memberName = null,
+  nameMapping = [],
   onGenerateActions,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -90,20 +94,28 @@ export default function ChatPanel({
     setLoading(true);
 
     try {
+      // Anonymize messages and context before sending to AI
+      const anonymizedMessages = updated
+        .filter((m) => m.content !== chatIntro || m.role !== "assistant")
+        .map((m) => ({ ...m, content: anonymize(m.content, nameMapping) }));
+      const anonymizedContext = anonymize(context, nameMapping);
+
       const res = await fetch("/api/askmike", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           coachId,
-          messages: updated.filter((m) => m.content !== chatIntro || m.role !== "assistant"),
-          context,
+          messages: anonymizedMessages,
+          context: anonymizedContext,
         }),
       });
 
       const data = await res.json();
+      // De-anonymize the AI response before displaying
+      const rawResponse = data.message ?? "Sorry, I couldn't generate a response.";
       const assistantMsg: ChatMessage = {
         role: "assistant",
-        content: data.message ?? "Sorry, I couldn't generate a response.",
+        content: deanonymize(rawResponse, nameMapping),
       };
       const withResponse = [...updated, assistantMsg];
       setMessages(withResponse);

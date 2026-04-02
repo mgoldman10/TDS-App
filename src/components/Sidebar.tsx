@@ -79,7 +79,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <aside className="flex h-screen w-56 flex-shrink-0 flex-col border-r border-brand-gray" style={{ backgroundColor: "#212121" }}>
       {/* Logo */}
-      <div className="px-6 py-6">
+      <div className="px-6 py-4">
         <Link href="/dashboard" className="text-lg font-extrabold tracking-tight text-white">
           Talent Density Systems
         </Link>
@@ -119,17 +119,17 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           if (visibleItems.length === 0) return null;
           const isFirst = groupIdx === 0;
           return (
-            <div key={group.label || "_bottom"} className="mb-3">
+            <div key={group.label || "_bottom"} className="mb-2">
               {group.label && (
                 <>
-                  {!isFirst && <div className="mx-3 mb-2 mt-1 border-t-2 border-white/20" />}
-                  <p className={`mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-white/50 ${isFirst ? "pt-0" : ""}`}>
+                  {!isFirst && <div className="mx-3 mb-1 mt-0.5 border-t-2 border-white/20" />}
+                  <p className={`mb-0.5 px-3 text-[10px] font-semibold uppercase tracking-widest text-white/50 ${isFirst ? "pt-0" : ""}`}>
                     {group.label}
                   </p>
                 </>
               )}
-              {!group.label && !isFirst && <div className="mx-3 mb-2 mt-1 border-t-2 border-white/20" />}
-              <ul className="space-y-0.5">
+              {!group.label && !isFirst && <div className="mx-3 mb-1 mt-0.5 border-t-2 border-white/20" />}
+              <ul className="space-y-0">
                 {visibleItems.map((item) => {
                   const active = isActive(item.href);
                   return (
@@ -137,7 +137,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       <Link
                         href={item.href}
                         onClick={onNavigate}
-                        className={`block rounded-[4px] px-3 py-2 text-sm font-semibold uppercase tracking-wider transition ${
+                        className={`block rounded-[4px] px-3 py-1.5 text-sm font-semibold uppercase tracking-wider transition ${
                           active
                             ? "bg-white/10 text-white"
                             : "text-white/60 hover:bg-white/5 hover:text-white"
@@ -155,7 +155,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       {/* User & Theme & Sign Out */}
-      <div className="border-t-2 border-white/20 px-4 py-4">
+      <div className="border-t-2 border-white/20 px-4 py-3">
         <p className="truncate text-xs font-light text-white/50">
           {profile.displayName || profile.email}
         </p>

@@ -14,6 +14,7 @@ import { getActionPlanForMember, createActionPlan, addAction, updateActions, add
 import { ensureDefaultCoaches } from "@/lib/coach-service";
 import AskMikeButton from "@/components/askmike/AskMikeButton";
 import ChatPanel from "@/components/askmike/ChatPanel";
+import { buildNameMapping } from "@/lib/anonymize";
 import { getCoreValues } from "@/lib/corevalue-service";
 import { calculateCultureFitScore } from "@/lib/culture-fit-scoring";
 import { calculateTotalProductivityScore } from "@/lib/productivity-scoring";
@@ -767,6 +768,7 @@ export default function MemberSummaryPage() {
             companyId={companyId ?? ""}
             memberId={memberId}
             memberName={member?.name ?? null}
+            nameMapping={buildNameMapping(member?.name, team?.name, profile?.displayName, openActions.map((a: ActionItem) => a.owner))}
             onGenerateActions={undefined}
           />
         )}

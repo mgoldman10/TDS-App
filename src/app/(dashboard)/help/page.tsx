@@ -318,6 +318,52 @@ const sections: HelpSection[] = [
       </>
     ),
   },
+  {
+    id: "data-security",
+    title: "Data Security & Privacy",
+    content: (
+      <>
+        <p className="font-semibold text-primary">Protecting your team&apos;s sensitive information</p>
+        <p>Assessment data is highly sensitive. The system includes built-in protections, but users play an important role too.</p>
+
+        <div className="mt-3 rounded-[4px] bg-green-50 p-3">
+          <p className="font-semibold text-green-800">What the System Does Automatically</p>
+          <ul className="mt-2 list-disc pl-5 space-y-1 text-green-800">
+            <li><strong>Data isolation</strong> — All assessment data is stored in your company&apos;s private database. No data is shared with other companies.</li>
+            <li><strong>Name anonymization</strong> — When using AskMike coaches, all names (team members, teams, users) are automatically replaced with codes before being sent to the AI. The AI never sees real names.</li>
+            <li><strong>AI does not train on your data</strong> — The AI (Anthropic Claude) processes your request and discards the data. It is not used to train or improve AI models.</li>
+            <li><strong>Email safety</strong> — Email reminders contain only a link back to the app. Names, scores, and coaching details are never included in emails.</li>
+            <li><strong>Role-based access</strong> — Users only see data for their own team. Leaders cannot see other leaders&apos; assessments at the same level.</li>
+          </ul>
+        </div>
+
+        <div className="mt-3 rounded-[4px] bg-primary/5 p-3">
+          <p className="font-semibold text-primary">Do&apos;s</p>
+          <ul className="mt-2 list-disc pl-5 space-y-1">
+            <li><strong>Log out when done</strong>, especially on shared or public devices</li>
+            <li><strong>Use strong, unique passwords</strong> for your account</li>
+            <li><strong>Use Privacy Mode</strong> on the Talent Summary before screen-sharing in meetings</li>
+            <li><strong>Keep AskMike conversations general</strong> when possible — the system already provides the necessary context; you don&apos;t need to add extra personal details</li>
+            <li><strong>Discuss development actions</strong> with team members — but never share the specific category label (HP/MP/LP/LCF) with them</li>
+          </ul>
+        </div>
+
+        <div className="mt-3 rounded-[4px] border border-red-200 bg-red-50 p-3">
+          <p className="font-semibold text-red-800">Don&apos;ts</p>
+          <ul className="mt-2 list-disc pl-5 space-y-1 text-red-800">
+            <li><strong>Don&apos;t share login credentials</strong> with anyone</li>
+            <li><strong>Don&apos;t screenshot assessment data</strong> and share via email, Slack, or text — keep it in the app</li>
+            <li><strong>Don&apos;t discuss one leader&apos;s assessments</strong> with another leader at the same level</li>
+            <li><strong>Don&apos;t type additional personal information</strong> in AskMike chats beyond what the system already knows (e.g., home addresses, personal issues, medical information)</li>
+            <li><strong>Don&apos;t copy AskMike coaching responses into emails</strong> that include the team member&apos;s name</li>
+            <li><strong>Don&apos;t share a team member&apos;s performance category</strong> (HP/MP/LP/LCF) directly with them — discuss actions and feedback, not the label</li>
+          </ul>
+        </div>
+
+        <p className="mt-3 italic text-primary/50">Why it matters: Trust is the foundation of the Talent Density process. If leaders don&apos;t trust that the system protects their honest assessments, they won&apos;t be honest. And if team members learn their specific category label, it undermines the coaching relationship. Protect the data, protect the process.</p>
+      </>
+    ),
+  },
 ];
 
 export default function HelpPage() {
