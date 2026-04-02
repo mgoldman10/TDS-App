@@ -542,8 +542,8 @@ export default function TeamsPage() {
                                 {isEditing ? "▲" : "✎"}
                               </button>
                               <button onClick={() => { setArchivingMemberId(m.id); setArchivingTeamId(team.id); setArchiveReason(""); }}
-                                className="text-[10px] text-primary/30 transition hover:text-primary/60" title="Archive member">
-                                ▼
+                                className="text-xs text-accent/50 transition hover:text-accent" title="Archive member">
+                                ✕
                               </button>
                             </>
                           )}

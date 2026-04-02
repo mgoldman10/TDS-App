@@ -6,11 +6,19 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { companyId, email, displayName, role } = body;
+    const { companyId, email, displayName, role, title, teamId } = body;
 
-    if (!companyId || !email || !displayName || !role) {
+    if (!email || !displayName || !role) {
       return NextResponse.json(
         { error: "Missing required fields." },
+        { status: 400 }
+      );
+    }
+
+    // Superadmins don't require a companyId
+    if (role !== "superadmin" && !companyId) {
+      return NextResponse.json(
+        { error: "Company ID is required for non-superadmin users." },
         { status: 400 }
       );
     }
@@ -24,30 +32,77 @@ export async function POST(request: NextRequest) {
       Math.random().toString(36).slice(2, 4).toUpperCase() +
       "!";
 
-    // Create Firebase Auth user
-    const userRecord = await adminAuth.createUser({
-      email,
-      password: tempPassword,
-      displayName,
-    });
-
-    const uid = userRecord.uid;
+    // Create or reuse Firebase Auth user
+    let uid: string;
+    try {
+      const userRecord = await adminAuth.createUser({
+        email,
+        password: tempPassword,
+        displayName,
+      });
+      uid = userRecord.uid;
+    } catch (createErr: unknown) {
+      // If email already exists, look up the existing user and reset their password
+      if (createErr && typeof createErr === "object" && "code" in createErr && (createErr as { code: string }).code === "auth/email-already-exists") {
+        const existingUser = await adminAuth.getUserByEmail(email);
+        uid = existingUser.uid;
+        await adminAuth.updateUser(uid, { password: tempPassword, displayName });
+      } else {
+        throw createErr;
+      }
+    }
 
     // Create userMapping
     await adminDb.doc(`userMappings/${uid}`).set({
-      companyId,
+      companyId: companyId || null,
       role,
     });
 
-    // Create company user doc
-    await adminDb.doc(`companies/${companyId}/users/${uid}`).set({
-      uid,
-      email,
-      displayName,
-      role,
-      teamIds: [],
-      createdAt: new Date(),
-    });
+    // Create superadmin doc (no company scope)
+    if (role === "superadmin") {
+      await adminDb.doc(`superadmin/${uid}`).set({
+        uid,
+        email,
+        displayName,
+        role,
+        createdAt: new Date(),
+      });
+    }
+
+    // Create company user doc (for non-superadmin users)
+    if (companyId) {
+      await adminDb.doc(`companies/${companyId}/users/${uid}`).set({
+        uid,
+        email,
+        displayName,
+        role,
+        isActive: true,
+        teamIds: teamId ? [teamId] : [],
+        createdAt: new Date(),
+      });
+
+      // Auto-create linked team member if team is specified
+      if (teamId) {
+        // Look up team leader for reportsToUserId
+        const teamSnap = await adminDb.doc(`companies/${companyId}/teams/${teamId}`).get();
+        const teamData = teamSnap.data();
+        const leaderId = teamData?.leaderId ?? "";
+
+        await adminDb.collection(`companies/${companyId}/teamMembers`).add({
+          name: displayName,
+          role: title || "",
+          teamId,
+          reportsToUserId: leaderId,
+          isAppUser: true,
+          appUserId: uid,
+          status: "active",
+          archivedAt: null,
+          archivedReason: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      }
+    }
 
     return NextResponse.json({ uid, tempPassword });
   } catch (err: unknown) {

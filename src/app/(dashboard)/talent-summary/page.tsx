@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { getAssessmentsByQuarter } from "@/lib/assessment-service";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from "recharts";
+import { getAssessmentsByQuarter, getAllAssessmentsForCompany } from "@/lib/assessment-service";
 import { getTeams, getAllTeamMembers } from "@/lib/team-service";
 import type { TeamMember } from "@/types/team";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
@@ -33,6 +36,7 @@ export default function TalentSummaryPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [filterMode, setFilterMode] = useState("my-reports"); // "all", "my-reports", "team-reports", or a teamId
   const [privacyMode, setPrivacyMode] = useState(false);
+  const [allAssessments, setAllAssessments] = useState<Assessment[]>([]);
   const [loading, setLoading] = useState(true);
 
   const yearOptions = Array.from({ length: 5 }, (_, i) => currentFY + 1 - i);
@@ -51,14 +55,16 @@ export default function TalentSummaryPage() {
     if (!companyId) return;
     setLoading(true);
     try {
-      const [assessmentData, teamData, memberData] = await Promise.all([
+      const [assessmentData, teamData, memberData, allData] = await Promise.all([
         getAssessmentsByQuarter(companyId, selectedYear, selectedQuarter),
         getTeams(companyId),
         getAllTeamMembers(companyId),
+        getAllAssessmentsForCompany(companyId),
       ]);
       setAssessments(assessmentData);
       setTeams(teamData);
       setTeamMembers(memberData);
+      setAllAssessments(allData);
     } catch (err) {
       console.error("Load error:", err);
     }
@@ -141,6 +147,59 @@ export default function TalentSummaryPage() {
   const tdi = total > 0
     ? Math.round(((counts.HP / total) - ((counts.LP + counts.LCF) / total)) * 100)
     : 0;
+
+  // Apply the same filter logic to any set of assessments
+  function applyFilter(assessmentsToFilter: Assessment[]): Assessment[] {
+    const authorized = isAdmin
+      ? assessmentsToFilter
+      : assessmentsToFilter.filter((a) => a.assessedByUserId === profile?.uid);
+
+    if (filterMode === "all") return authorized;
+    if (filterMode === "my-reports") return authorized.filter((a) => a.assessedByUserId === profile?.uid);
+
+    if (filterMode.startsWith("reports-of:")) {
+      const parentTeamId = filterMode.replace("reports-of:", "");
+      const parentTeam = teams.find((t) => t.id === parentTeamId);
+      if (!parentTeam) return authorized;
+      const subTeams = teams.filter((t) => t.parentTeamId === parentTeamId);
+      const inTheRoom = new Set<string>();
+      if (parentTeam.leaderName) inTheRoom.add(parentTeam.leaderName);
+      for (const st of subTeams) { if (st.leaderName) inTheRoom.add(st.leaderName); }
+      for (const m of teamMembers) { if (m.teamId === parentTeamId) inTheRoom.add(m.name); }
+      return authorized.filter((a) => !inTheRoom.has(a.memberName));
+    }
+
+    return authorized.filter((a) => {
+      const member = teamMembers.find((m) => m.id === a.memberId);
+      if (!member) return false;
+      if (member.teamId === filterMode) return true;
+      const team = teams.find((t) => t.id === filterMode);
+      if (team && team.leaderName === a.memberName) return true;
+      return false;
+    });
+  }
+
+  // Compute TDI trend across all quarters using the same filter
+  const tdiTrendData = (() => {
+    const grouped = new Map<string, Assessment[]>();
+    for (const a of allAssessments) {
+      const key = `${a.fiscalYear}-${a.fiscalQuarter}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(a);
+    }
+    const points: { quarter: string; tdi: number; sortKey: number }[] = [];
+    for (const [key, qAssessments] of Array.from(grouped.entries())) {
+      const [fy, fq] = key.split("-").map(Number);
+      const filtered = applyFilter(qAssessments);
+      const t = filtered.length;
+      if (t === 0) continue;
+      const c = { HP: 0, MP: 0, LP: 0, LCF: 0 };
+      for (const a of filtered) { if (a.performanceCategory in c) c[a.performanceCategory as PerformanceCategory]++; }
+      const tdiVal = Math.round(((c.HP / t) - ((c.LP + c.LCF) / t)) * 100);
+      points.push({ quarter: `Q${fq} FY${fy}`, tdi: tdiVal, sortKey: fy * 10 + fq });
+    }
+    return points.sort((a, b) => a.sortKey - b.sortKey);
+  })();
 
   if (loading) {
     return (
@@ -258,6 +317,24 @@ export default function TalentSummaryPage() {
                   <span className="text-sm font-bold text-primary">{total}</span>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* TDI Trend */}
+        {tdiTrendData.length > 0 && (
+          <div className="mt-6 rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-primary/40">TDI Trend</h2>
+            <div className="mt-3">
+              <ResponsiveContainer width="100%" height={250}>
+                <LineChart data={tdiTrendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                  <XAxis dataKey="quarter" tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: "#9ca3af" }} axisLine={false} tickLine={false} width={35} tickFormatter={(v) => `${v}%`} />
+                  <Tooltip contentStyle={{ fontSize: 12, borderRadius: 4, border: "1px solid #e5e7eb" }} formatter={(value) => [`${value}%`, "TDI"]} />
+                  <Line type="monotone" dataKey="tdi" name="TDI" stroke="#22c55e" strokeWidth={2} dot={{ r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
         )}

@@ -22,6 +22,7 @@ export interface UserProfile {
   role: UserRole;
   companyId: string | null;
   teamIds: string[];
+  isActive?: boolean; // defaults to true; false = deactivated (soft delete)
   createdAt: Timestamp;
 }
 

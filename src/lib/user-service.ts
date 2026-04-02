@@ -3,7 +3,6 @@ import {
   doc,
   getDocs,
   updateDoc,
-  deleteDoc,
   setDoc,
   query,
   orderBy,
@@ -38,10 +37,18 @@ export async function createUserMapping(
   await setDoc(doc(db, "userMappings", uid), { companyId, role });
 }
 
-export async function deleteCompanyUser(
+/** Soft-delete: deactivate a user (preserves all history) */
+export async function deactivateUser(
   companyId: string,
   userId: string
 ): Promise<void> {
-  await deleteDoc(doc(db, "companies", companyId, "users", userId));
-  await deleteDoc(doc(db, "userMappings", userId));
+  await updateDoc(doc(db, "companies", companyId, "users", userId), { isActive: false });
+}
+
+/** Reactivate a previously deactivated user */
+export async function reactivateUser(
+  companyId: string,
+  userId: string
+): Promise<void> {
+  await updateDoc(doc(db, "companies", companyId, "users", userId), { isActive: true });
 }

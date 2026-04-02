@@ -110,12 +110,14 @@ export async function createTeamMember(
     role: string;
     teamId: string;
     reportsToUserId: string;
+    isAppUser?: boolean;
+    appUserId?: string | null;
   }
 ): Promise<string> {
   const ref = await addDoc(membersRef(companyId), {
     ...data,
-    isAppUser: false,
-    appUserId: null,
+    isAppUser: data.isAppUser ?? false,
+    appUserId: data.appUserId ?? null,
     status: "active",
     archivedAt: null,
     archivedReason: null,
