@@ -13,8 +13,21 @@ function getAdminApp(): App {
 
   const serviceAccount = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
   if (serviceAccount) {
+    let parsed;
+    try {
+      // Try direct JSON parse first
+      parsed = JSON.parse(serviceAccount);
+    } catch {
+      // Netlify may base64-encode or double-escape the value
+      try {
+        parsed = JSON.parse(Buffer.from(serviceAccount, "base64").toString("utf-8"));
+      } catch {
+        // Try unescaping double-escaped newlines
+        parsed = JSON.parse(serviceAccount.replace(/\\\\n/g, "\\n"));
+      }
+    }
     adminApp = initializeApp({
-      credential: cert(JSON.parse(serviceAccount)),
+      credential: cert(parsed),
     });
   } else {
     adminApp = initializeApp();
