@@ -11,23 +11,23 @@ function getAdminApp(): App {
     return adminApp;
   }
 
+  // Support split env vars (reliable on Netlify) or single JSON blob (local dev)
+  const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
   const serviceAccount = process.env.FIREBASE_ADMIN_SERVICE_ACCOUNT;
-  if (serviceAccount) {
-    let parsed;
-    try {
-      // Try direct JSON parse first
-      parsed = JSON.parse(serviceAccount);
-    } catch {
-      // Netlify may base64-encode or double-escape the value
-      try {
-        parsed = JSON.parse(Buffer.from(serviceAccount, "base64").toString("utf-8"));
-      } catch {
-        // Try unescaping double-escaped newlines
-        parsed = JSON.parse(serviceAccount.replace(/\\\\n/g, "\\n"));
-      }
-    }
+
+  if (projectId && clientEmail && privateKey) {
     adminApp = initializeApp({
-      credential: cert(parsed),
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey: privateKey.replace(/\\n/g, "\n"),
+      }),
+    });
+  } else if (serviceAccount) {
+    adminApp = initializeApp({
+      credential: cert(JSON.parse(serviceAccount)),
     });
   } else {
     adminApp = initializeApp();
