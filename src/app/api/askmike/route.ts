@@ -92,9 +92,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ message: assistantMessage });
   } catch (err: unknown) {
-    console.error("AskMike API error:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("AskMike API error:", message);
     return NextResponse.json(
-      { error: "Failed to process request" },
+      { error: "Failed to process request", detail: message },
       { status: 500 }
     );
   }
