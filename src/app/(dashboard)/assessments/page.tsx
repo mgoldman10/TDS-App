@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { formatNumber, stripCommas } from "@/lib/formatNumber";
 import { useCompany } from "@/contexts/CompanyContext";
 import { getCoreValues } from "@/lib/corevalue-service";
-import { getAllTeamMembers } from "@/lib/team-service";
+import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { getTargetsForMember } from "@/lib/productivity-service";
 import { calculateCultureFitScore } from "@/lib/culture-fit-scoring";
 import { calculateTotalProductivityScore } from "@/lib/productivity-scoring";
@@ -86,10 +86,11 @@ export default function AssessmentsPage() {
   async function loadInitialData() {
     if (!companyId) return;
     try {
-      const [membersData, valuesData] = await Promise.all([
-        getAllTeamMembers(companyId),
+      const [authResult, valuesData] = await Promise.all([
+        getAuthorizedMemberIds(companyId, profile!),
         getCoreValues(companyId),
       ]);
+      const membersData = authResult.allMembers;
       setTeamMembers(membersData);
       setCoreValues(valuesData);
       // Auto-select preselected member from URL

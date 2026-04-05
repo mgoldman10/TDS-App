@@ -8,7 +8,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { getAssessmentsByQuarter, getAllAssessmentsForCompany } from "@/lib/assessment-service";
-import { getTeams, getAllTeamMembers } from "@/lib/team-service";
+import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import type { TeamMember } from "@/types/team";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { DEFAULT_SCORING_PARAMETERS } from "@/types/company";
@@ -55,27 +55,26 @@ export default function TalentSummaryPage() {
     if (!companyId) return;
     setLoading(true);
     try {
-      const [assessmentData, teamData, memberData, allData] = await Promise.all([
+      const [assessmentData, authResult, allData] = await Promise.all([
         getAssessmentsByQuarter(companyId, selectedYear, selectedQuarter),
-        getTeams(companyId),
-        getAllTeamMembers(companyId),
+        getAuthorizedMemberIds(companyId, profile!),
         getAllAssessmentsForCompany(companyId),
       ]);
-      setAssessments(assessmentData);
+      const { authorizedMemberIds: authMemberIds, allMembers: memberData, allTeams: teamData } = authResult;
+      // Filter assessments to authorized members
+      setAssessments(assessmentData.filter((a) => authMemberIds.has(a.memberId)));
       setTeams(teamData);
       setTeamMembers(memberData);
-      setAllAssessments(allData);
+      setAllAssessments(allData.filter((a) => authMemberIds.has(a.memberId)));
     } catch (err) {
       console.error("Load error:", err);
     }
     setLoading(false);
   }
 
-  // Authorization: leaders only see assessments they created; admins see all
+  // Assessments are already filtered by authorized members in loadData
   const isAdmin = profile?.role === "superadmin" || profile?.role === "company_admin";
-  const authorizedAssessments = isAdmin
-    ? assessments
-    : assessments.filter((a) => a.assessedByUserId === profile?.uid);
+  const authorizedAssessments = assessments;
 
   // Teams that have sub-teams (these are the teams that "meet in a room")
   const teamsWithSubTeams = teams.filter((t) =>

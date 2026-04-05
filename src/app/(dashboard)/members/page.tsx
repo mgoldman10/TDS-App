@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { getAllTeamMembers, getMembersByLeader, getTeams } from "@/lib/team-service";
+import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { canManageCompany } from "@/lib/permissions";
 import type { TeamMember, Team } from "@/types/team";
 
@@ -35,21 +35,13 @@ export default function MemberSelectPage() {
   async function loadData() {
     if (!companyId || !profile) return;
     try {
-      const [all, teamData] = await Promise.all([
-        isAdmin ? getAllTeamMembers(companyId) : getMembersByLeader(companyId, profile.uid),
-        getTeams(companyId),
-      ]);
-      setAllMembers(all);
+      const { allMembers: members, allTeams: teamData } = await getAuthorizedMemberIds(companyId, profile);
+      setAllMembers(members);
       setTeams(teamData);
 
-      // For non-admins, also load their direct reports specifically
-      if (!isAdmin) {
-        setMyMembers(all);
-      } else {
-        // Admins see all — group by their direct reports first
-        const direct = all.filter((m) => m.reportsToUserId === profile.uid);
-        setMyMembers(direct);
-      }
+      // Direct reports shown first
+      const direct = members.filter((m) => m.reportsToUserId === profile.uid);
+      setMyMembers(direct);
     } catch (err) {
       console.error("Load error:", err);
     }

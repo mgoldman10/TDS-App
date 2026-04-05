@@ -9,7 +9,8 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { getAllAssessmentsForCompany, getAssessmentsByQuarter } from "@/lib/assessment-service";
-import { getTeams, getAllTeamMembers, getTeamsByLeader, getChangesByType } from "@/lib/team-service";
+import { getChangesByType } from "@/lib/team-service";
+import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { updateCompany } from "@/lib/company-service";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { DEFAULT_SCORING_PARAMETERS } from "@/types/company";
@@ -41,20 +42,6 @@ function categoryCounts(assessments: Assessment[]): Record<PerformanceCategory, 
   return counts;
 }
 
-function getSubTeamIds(teamId: string, allTeams: Team[]): Set<string> {
-  const ids = new Set<string>([teamId]);
-  let added = true;
-  while (added) {
-    added = false;
-    for (const t of allTeams) {
-      if (t.parentTeamId && ids.has(t.parentTeamId) && !ids.has(t.id)) {
-        ids.add(t.id);
-        added = true;
-      }
-    }
-  }
-  return ids;
-}
 
 export default function ReportsPage() {
   const { profile } = useAuth();
@@ -108,37 +95,22 @@ export default function ReportsPage() {
   async function loadData() {
     if (!companyId || !profile) return;
     try {
-      const [allData, teamData, memberData, teamChanges, leaderChanges] = await Promise.all([
+      const [allData, authResult, teamChanges, leaderChanges] = await Promise.all([
         getAllAssessmentsForCompany(companyId),
-        getTeams(companyId),
-        getAllTeamMembers(companyId),
+        getAuthorizedMemberIds(companyId, profile),
         getChangesByType(companyId, "team").catch(() => []),
         getChangesByType(companyId, "leader_change").catch(() => []),
       ]);
 
-      // Determine authorized teams
-      let authIds: Set<string>;
-      if (isAdmin) {
-        authIds = new Set(teamData.map((t) => t.id));
-      } else {
-        const myTeams = await getTeamsByLeader(companyId, profile.uid);
-        authIds = new Set<string>();
-        for (const t of myTeams) {
-          const subIds = getSubTeamIds(t.id, teamData);
-          for (const id of Array.from(subIds)) authIds.add(id);
-        }
-      }
+      const { authorizedTeamIds: authIds, authorizedMemberIds: authMemberIds, allMembers: memberData, allTeams: teamData } = authResult;
       setAuthorizedTeamIds(authIds);
 
       // Filter data by authorization
-      const authMemberIds = new Set(memberData.filter((m) => authIds.has(m.teamId)).map((m) => m.id));
-      const filteredAssessments = isAdmin
-        ? allData
-        : allData.filter((a) => a.assessedByUserId === profile.uid || authMemberIds.has(a.memberId));
+      const filteredAssessments = allData.filter((a) => authMemberIds.has(a.memberId));
 
       setAllAssessments(filteredAssessments);
-      setTeams(teamData.filter((t) => authIds.has(t.id)));
-      setMembers(memberData.filter((m) => authIds.has(m.teamId)));
+      setTeams(teamData);
+      setMembers(memberData);
       setChanges([...teamChanges, ...leaderChanges].filter((c) => authMemberIds.has(c.memberId)));
 
       const goals = activeCompany?.tdiGoals ?? {};

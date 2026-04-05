@@ -8,6 +8,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { getAllTeamMembers, getTeams, getMemberChanges } from "@/lib/team-service";
+import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { getAssessmentHistory, getAssessmentForMember, createAssessment, updateAssessment } from "@/lib/assessment-service";
 import { getTargetsForMember, createTarget, updateTarget, deleteTarget } from "@/lib/productivity-service";
 import { getActionPlanForMember, createActionPlan, addAction, updateActions, addNote } from "@/lib/actionplan-service";
@@ -99,8 +100,15 @@ export default function MemberSummaryPage() {
   }, [profile, companyId, memberId]);
 
   async function loadData() {
-    if (!companyId) return;
+    if (!companyId || !profile) return;
     try {
+      // Check authorization first
+      const { authorizedMemberIds } = await getAuthorizedMemberIds(companyId, profile);
+      if (!authorizedMemberIds.has(memberId)) {
+        router.replace("/members");
+        return;
+      }
+
       const [allMembers, allTeams, assessmentData, targetData, planData, valuesData, changesData, coachesData] = await Promise.all([
         getAllTeamMembers(companyId),
         getTeams(companyId),

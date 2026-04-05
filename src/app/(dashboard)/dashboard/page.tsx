@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { getAssessmentsByQuarter, getAllAssessmentsForCompany } from "@/lib/assessment-service";
 import { getAllActionPlans, updateActions } from "@/lib/actionplan-service";
-import { getAllTeamMembers } from "@/lib/team-service";
+import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { DEFAULT_SCORING_PARAMETERS } from "@/types/company";
 import TalentGrid from "@/components/TalentGrid";
@@ -53,8 +53,6 @@ export default function DashboardPage() {
   const [allPlans, setAllPlans] = useState<{ id: string; memberId: string; memberName: string; actions: { description: string; targetDate: string; completedAt: string | null; owner: string }[] }[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const isAdmin = profile?.role === "superadmin" || profile?.role === "company_admin";
-
   useEffect(() => {
     if (!profile || !companyId) {
       if (profile?.role === "superadmin") router.replace("/admin");
@@ -68,16 +66,18 @@ export default function DashboardPage() {
   async function loadData() {
     if (!companyId) return;
     try {
-      const [quarterData, allData, plansData, membersData] = await Promise.all([
+      const [quarterData, allData, plansData, authResult] = await Promise.all([
         getAssessmentsByQuarter(companyId, currentFY, currentFQ),
         getAllAssessmentsForCompany(companyId),
         getAllActionPlans(companyId),
-        getAllTeamMembers(companyId),
+        getAuthorizedMemberIds(companyId, profile!),
       ]);
 
-      // Filter by authorization
+      const { authorizedMemberIds: authMemberIds, allMembers: membersData } = authResult;
+
+      // Filter assessments to authorized members
       const authorized = (assessments: Assessment[]) =>
-        isAdmin ? assessments : assessments.filter((a) => a.assessedByUserId === profile?.uid);
+        assessments.filter((a) => authMemberIds.has(a.memberId));
 
       // Current quarter assessments (exclude archived members)
       const activeMemberIds = new Set(membersData.filter((m) => (m.status ?? "active") === "active").map((m) => m.id));
@@ -106,10 +106,11 @@ export default function DashboardPage() {
       trend.sort((a, b) => a.sortKey - b.sortKey);
       setTdiTrend(trend);
 
-      // Action items across all members
-      setAllPlans(plansData);
+      // Action items — filter to authorized members
+      const authPlans = plansData.filter((p) => authMemberIds.has(p.memberId));
+      setAllPlans(authPlans);
       const flat: FlatAction[] = [];
-      for (const plan of plansData) {
+      for (const plan of authPlans) {
         for (let idx = 0; idx < plan.actions.length; idx++) {
           const action = plan.actions[idx];
           flat.push({

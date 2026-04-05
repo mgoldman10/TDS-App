@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { getAllTeamMembers } from "@/lib/team-service";
+import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import {
   getTargetsForMember,
   createTarget,
@@ -56,9 +56,9 @@ export default function ProductivityTargetsPage() {
   async function loadMembers() {
     if (!companyId) return;
     try {
-      const data = await getAllTeamMembers(companyId);
+      const { allMembers: data } = await getAuthorizedMemberIds(companyId, profile!);
       setTeamMembers(data);
-      if (preselectedMember && data.some((m) => m.id === preselectedMember)) {
+      if (preselectedMember && data.some((m: TeamMember) => m.id === preselectedMember)) {
         loadTargets(preselectedMember);
       }
     } catch {
