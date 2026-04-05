@@ -4,8 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "@/lib/firebase";
 import { getCompanies, createCompany } from "@/lib/company-service";
 import type { Company } from "@/types/company";
 
@@ -78,13 +76,7 @@ export default function AdminPage() {
       if (!res.ok) {
         setSaError(data.error || "Failed to create superadmin.");
       } else {
-        const emailUsed = saEmail.trim();
-        try {
-          await sendPasswordResetEmail(auth, emailUsed);
-          setSaPassword(`__email_sent__${emailUsed}`);
-        } catch {
-          setSaPassword(data.tempPassword);
-        }
+        setSaPassword(`__email_sent__${saEmail.trim()}`);
         setSaName("");
         setSaEmail("");
       }
