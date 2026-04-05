@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase-admin";
+import { sendWelcomeEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -104,7 +105,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ uid, tempPassword });
+    // Generate password reset link and send welcome email
+    let resetLink = "";
+    try {
+      resetLink = await adminAuth.generatePasswordResetLink(email);
+      await sendWelcomeEmail(email, displayName, resetLink);
+    } catch (emailErr) {
+      console.error("Welcome email error:", emailErr);
+      // Non-critical — user was created, return the link as fallback
+    }
+
+    return NextResponse.json({ uid, resetLink });
   } catch (err: unknown) {
     console.error("User creation error:", err);
     const message =

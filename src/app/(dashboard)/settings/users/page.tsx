@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { canManageUsers } from "@/lib/permissions";
-import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "@/lib/firebase";
 import { getCompanyUsers, updateUserRole, deactivateUser, reactivateUser } from "@/lib/user-service";
 import { getTeams } from "@/lib/team-service";
 import type { UserProfile, UserRole } from "@/types/auth";
@@ -92,15 +90,7 @@ export default function UsersPage() {
       if (!res.ok) {
         setError(data.error || "Failed to create user.");
       } else {
-        // Send password reset email so user can set their own password
-        const emailUsed = formEmail.trim();
-        try {
-          await sendPasswordResetEmail(auth, emailUsed);
-          setCreatedPassword(`__email_sent__${emailUsed}`);
-        } catch {
-          // Fallback: show temp password if email fails
-          setCreatedPassword(data.tempPassword);
-        }
+        setCreatedPassword(`__email_sent__${formEmail.trim()}`);
         setFormName("");
         setFormEmail("");
         setFormTitle("");
@@ -124,10 +114,15 @@ export default function UsersPage() {
     }
   }
 
-  async function handleResetPassword(email: string) {
+  async function handleResetPassword(user: UserProfile) {
     try {
-      await sendPasswordResetEmail(auth, email);
-      alert(`Password reset email sent to ${email}`);
+      const res = await fetch("/api/users/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: user.email, displayName: user.displayName }),
+      });
+      if (!res.ok) throw new Error();
+      alert(`Password reset email sent to ${user.email}`);
     } catch {
       setError("Failed to send password reset email.");
     }
@@ -305,7 +300,7 @@ export default function UsersPage() {
                       ))}
                     </select>
                     <button
-                      onClick={() => handleResetPassword(u.email)}
+                      onClick={() => handleResetPassword(u)}
                       className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary"
                       title="Send password reset email"
                     >
