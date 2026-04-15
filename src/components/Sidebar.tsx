@@ -30,9 +30,8 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Team",
+    label: "Talent",
     items: [
-      { label: "Teams & Members", href: "/teams", companyScoped: true },
       { label: "Talent Summary", href: "/talent-summary", companyScoped: true },
       { label: "Reports", href: "/reports", minRole: "senior_leader", companyScoped: true },
     ],
@@ -42,7 +41,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { label: "Core Values", href: "/core-values", minRole: "company_admin", companyScoped: true },
       { label: "Company Settings", href: "/settings/company", minRole: "company_admin", companyScoped: true },
-      { label: "Users", href: "/settings/users", minRole: "company_admin", companyScoped: true },
+      { label: "Teams & Users", href: "/teams", minRole: "company_admin", companyScoped: true },
     ],
   },
   {

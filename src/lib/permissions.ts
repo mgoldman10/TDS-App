@@ -25,6 +25,13 @@ export function canViewReports(profile: UserProfile | null): boolean {
   return isAtLeast(profile.role, "senior_leader");
 }
 
+/** Can manage a specific team: true for admins, or the team's own leader */
+export function canManageTeam(profile: UserProfile | null, teamLeaderId: string): boolean {
+  if (!profile) return false;
+  if (isAtLeast(profile.role, "company_admin")) return true;
+  return profile.uid === teamLeaderId;
+}
+
 /** Check if user has at least the given role */
 export function hasRole(profile: UserProfile | null, role: UserRole): boolean {
   if (!profile) return false;

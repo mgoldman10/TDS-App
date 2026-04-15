@@ -130,7 +130,7 @@ export async function createTeamMember(
 export async function updateTeamMember(
   companyId: string,
   memberId: string,
-  data: Partial<{ name: string; role: string; teamId: string; reportsToUserId: string; status: "active" | "archived"; archivedAt: ReturnType<typeof serverTimestamp> | null; archivedReason: string | null }>
+  data: Partial<{ name: string; role: string; teamId: string; reportsToUserId: string; status: "active" | "archived"; archivedAt: ReturnType<typeof serverTimestamp> | null; archivedReason: string | null; isAppUser: boolean; appUserId: string | null }>
 ): Promise<void> {
   await updateDoc(doc(db, "companies", companyId, "teamMembers", memberId), {
     ...data,
@@ -276,6 +276,62 @@ export async function promoteToLeader(
   });
   // Log promotion on the promoted member
   await logMemberChange(companyId, memberId, "promoted_to_leader", previousLeaderName || "none", memberName, changedByUserId, effectiveDate, fiscalYear, fiscalQuarter);
+}
+
+export interface DuplicateMatch {
+  type: "member" | "user";
+  id: string;
+  name: string;
+  email?: string;
+  teamId?: string;
+}
+
+/**
+ * Check for existing team members or users with the same name or email.
+ * Returns any matches found so the UI can warn before saving.
+ */
+export async function findDuplicateMember(
+  companyId: string,
+  name: string,
+  email: string
+): Promise<DuplicateMatch[]> {
+  const matches: DuplicateMatch[] = [];
+  const nameLower = name.trim().toLowerCase();
+  const emailLower = email.trim().toLowerCase();
+
+  if (!nameLower && !emailLower) return matches;
+
+  // Check teamMembers collection
+  const membersSnap = await getDocs(
+    query(collection(db, "companies", companyId, "teamMembers"), where("status", "==", "active"))
+  );
+  for (const d of membersSnap.docs) {
+    const data = d.data();
+    const existingName = (data.name ?? "").toLowerCase();
+    const existingEmail = (data.email ?? "").toLowerCase();
+    const nameMatch = nameLower && existingName === nameLower;
+    const emailMatch = emailLower && existingEmail === emailLower;
+    if (nameMatch || emailMatch) {
+      matches.push({ type: "member", id: d.id, name: data.name, email: data.email, teamId: data.teamId });
+    }
+  }
+
+  // Check users collection for email collision
+  if (emailLower) {
+    const usersSnap = await getDocs(
+      query(collection(db, "companies", companyId, "users"), where("email", "==", emailLower))
+    );
+    for (const d of usersSnap.docs) {
+      const data = d.data();
+      // Only add if not already caught via the member check
+      const alreadyFound = matches.some((m) => m.type === "user" && m.id === d.id);
+      if (!alreadyFound) {
+        matches.push({ type: "user", id: d.id, name: data.displayName, email: data.email });
+      }
+    }
+  }
+
+  return matches;
 }
 
 /** Log a leader change event on all members of a team */

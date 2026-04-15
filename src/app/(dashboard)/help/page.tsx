@@ -82,19 +82,81 @@ const sections: HelpSection[] = [
   },
   {
     id: "teams",
-    title: "Teams & Members",
+    title: "Teams & Users (Admin Setup)",
     content: (
       <>
-        <p className="font-semibold text-primary">Build your team hierarchy</p>
-        <ul className="list-disc pl-5 space-y-1">
-          <li><strong>Team Hierarchy</strong> — Create a top-level team (e.g., Senior Leadership Team) with sub-teams underneath (e.g., Sales, Marketing, Finance). Each team has a leader.</li>
-          <li><strong>Adding Members</strong> — Add team members with name and title. Members appear under their team and report to the team leader.</li>
-          <li><strong>Archive vs Delete</strong> — Use the archive button (▼) instead of deleting. Archived members preserve their assessment history for accurate historical TDI reporting.</li>
-          <li><strong>Change Team</strong> — Move a member to a different team. The change is logged with the date so you can track how moves affect performance.</li>
-          <li><strong>Promote to Leader</strong> — Promote a member to lead their team. This logs a leader change event on all team members for reporting context.</li>
-          <li><strong>Show Archived</strong> — Toggle to see archived members (grayed out) alongside active ones.</li>
-        </ul>
-        <p className="mt-2 italic text-primary/50">Why it matters: Accurate team structure is the foundation. Every assessment, every TDI calculation, every report depends on knowing who reports to whom.</p>
+        <p className="font-semibold text-primary">Manage your team structure and app access in one place</p>
+        <p className="mt-1">Found under <strong>Setup → Teams & Users</strong>. This is where you build the org chart, add team members, and control who has access to the app.</p>
+
+        <div className="mt-3 space-y-3">
+          <div>
+            <p className="font-semibold text-primary/80">Team Hierarchy</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Create a top-level team (e.g., Senior Leadership Team) with sub-teams underneath (e.g., Sales, Marketing, Finance)</li>
+              <li>Each team has a designated leader — sub-team leaders automatically appear as members of the parent team</li>
+              <li>Admins can manage all teams; leaders can only manage their own team</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="font-semibold text-primary/80">Adding Team Members</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Add members with name and title — they appear under their team for assessment purposes</li>
+              <li>Not every team member needs to be an app user. Add the email field to check for duplicates or to send an invite</li>
+              <li>The system checks for duplicate names or emails as you type and will warn you before saving</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="font-semibold text-primary/80">Inviting as App Users</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>When adding a member, check <strong>Invite as app user</strong> and enter their email — they&apos;ll receive a setup email to create their password</li>
+              <li>For existing members, use the <strong>Invite as User</strong> button in their edit panel</li>
+              <li>Leaders can only invite at the <strong>Leader</strong> role level; Company Admins can assign any role</li>
+              <li>App users are shown with a green <strong>User</strong> badge on their member card</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="font-semibold text-primary/80">Managing App Users</p>
+            <p className="mt-1">For members who are app users, admins see an inline control bar with:</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li><strong>Role selector</strong> — Change between Leader, Senior Leader, and Company Admin</li>
+              <li><strong>Reset Password</strong> — Send a password reset email</li>
+              <li><strong>Deactivate / Reactivate</strong> — Suspend access without deleting the user or their data</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="font-semibold text-primary/80">Unlinked Users</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>If a user was created without being assigned to a team, they appear in a yellow <strong>Unlinked Users</strong> banner at the top of the page</li>
+              <li>Use <strong>Assign to Team</strong> to link them to a team (creates their team member record) or deactivate them if no longer needed</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="font-semibold text-primary/80">Other Member Actions</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li><strong>Archive vs Delete</strong> — Archive members when they leave. Archived members preserve their assessment history for accurate historical TDI reporting</li>
+              <li><strong>Change Team</strong> — Move a member to a different team; the change is logged with a date for reporting context</li>
+              <li><strong>Promote to Leader</strong> — Promote a member to lead their team; logs a leader change event on all team members</li>
+              <li><strong>Show Archived</strong> — Toggle to see archived members (grayed out) alongside active ones</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="font-semibold text-primary/80">User Roles</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li><strong>Superadmin</strong> — Full access across all companies</li>
+              <li><strong>Company Admin</strong> — Full access within their company: settings, users, all teams and assessments</li>
+              <li><strong>Senior Leader</strong> — Manages their own team; can view reports. Cannot modify company settings.</li>
+              <li><strong>Leader</strong> — Manages their own team and direct reports only. Cannot see other teams&apos; data.</li>
+            </ul>
+          </div>
+        </div>
+
+        <p className="mt-3 italic text-primary/50">Why it matters: Accurate team structure is the foundation of the entire system. Every assessment, TDI calculation, and report depends on knowing who reports to whom — and controlling access ensures assessment data stays confidential to the right people.</p>
       </>
     ),
   },
@@ -234,21 +296,6 @@ const sections: HelpSection[] = [
     ),
   },
   {
-    id: "users",
-    title: "Users (Admin)",
-    content: (
-      <>
-        <p className="font-semibold text-primary">Manage who has access</p>
-        <ul className="list-disc pl-5 space-y-1">
-          <li><strong>Superadmin</strong> — Full access to everything across all companies. Can manage coaches, settings, and all data.</li>
-          <li><strong>Company Admin</strong> — Full access within their company. Can manage settings, users, teams, and all assessments.</li>
-          <li><strong>Member</strong> — Access scoped to their role. Leaders see their own team&apos;s data and assessments they&apos;ve created. Reports are filtered to their teams and sub-teams only.</li>
-        </ul>
-        <p className="mt-2 italic text-primary/50">Why it matters: Assessment data is sensitive. Leaders should see their people, not everyone else&apos;s. Proper role-based access builds trust that the system is confidential.</p>
-      </>
-    ),
-  },
-  {
     id: "scoring",
     title: "Scoring Logic & Formulas",
     content: (
@@ -300,8 +347,7 @@ const sections: HelpSection[] = [
         <ol className="list-decimal pl-5 space-y-2">
           <li><strong>Company Settings</strong> — Set your fiscal year start month. Review and adjust scoring thresholds if needed (defaults work for most companies).</li>
           <li><strong>Core Values</strong> — Enter your company&apos;s 3-5 core values. These are the behaviors you expect everyone to live by.</li>
-          <li><strong>Teams</strong> — Create your team hierarchy. Start with the Senior Leadership Team, then add sub-teams (Sales, Marketing, etc.) with their leaders.</li>
-          <li><strong>Team Members</strong> — Add members to each team with name and title.</li>
+          <li><strong>Teams & Users</strong> — Create your team hierarchy under Setup → Teams & Users. Start with the Senior Leadership Team, then add sub-teams (Sales, Marketing, etc.) with their leaders. Add each team member with name and title. Check &quot;Invite as app user&quot; when adding members who need system access — they&apos;ll receive a password setup email.</li>
           <li><strong>Productivity Targets</strong> — For each team member, go to their detail page → Targets tab. Define 2-5 KPIs with weights totaling 100%.</li>
           <li><strong>First Assessment</strong> — Go to each member&apos;s detail page → Assessment tab. Rate core values, enter productivity actuals, and save.</li>
           <li><strong>Review</strong> — Visit the Talent Summary to see your first Talent Density Model and TDI score.</li>

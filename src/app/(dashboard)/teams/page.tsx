@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { canManageCompany } from "@/lib/permissions";
+import { canManageCompany, canManageTeam } from "@/lib/permissions";
 import {
   getTeams,
   createTeam,
@@ -19,12 +19,21 @@ import {
   changeTeam,
   promoteToLeader,
   logLeaderChangeForTeamMembers,
+  findDuplicateMember,
 } from "@/lib/team-service";
-import { getCompanyUsers } from "@/lib/user-service";
+import { getCompanyUsers, updateUserRole, deactivateUser, reactivateUser } from "@/lib/user-service";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { Team, TeamMember } from "@/types/team";
-import type { UserProfile } from "@/types/auth";
+import type { UserProfile, UserRole } from "@/types/auth";
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  superadmin: "Super Admin",
+  company_admin: "Company Admin",
+  senior_leader: "Senior Leader",
+  leader: "Leader",
+};
+const ASSIGNABLE_ROLES: UserRole[] = ["company_admin", "senior_leader", "leader"];
 
 /** Build a tree structure from flat teams list */
 function buildTree(teams: Team[]): Map<string | null, Team[]> {
@@ -53,6 +62,7 @@ export default function TeamsPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [members, setMembers] = useState<Record<string, TeamMember[]>>({});
   const [users, setUsers] = useState<UserProfile[]>([]);
+  const [unlinkedUsers, setUnlinkedUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -93,11 +103,28 @@ export default function TeamsPage() {
   const [addMemberTeamId, setAddMemberTeamId] = useState<string | null>(null);
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberTitle, setNewMemberTitle] = useState("");
+  const [newMemberEmail, setNewMemberEmail] = useState("");
+  const [newMemberInvite, setNewMemberInvite] = useState(false);
+  const [newMemberRole, setNewMemberRole] = useState<UserRole>("leader");
+  const [dupWarning, setDupWarning] = useState("");
+  const [addingMember, setAddingMember] = useState(false);
 
   // Edit member
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editTitle, setEditTitle] = useState("");
+
+  // Invite existing member as user
+  const [invitingMemberId, setInvitingMemberId] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<UserRole>("leader");
+  const [inviting, setInviting] = useState(false);
+
+  // Assign unlinked user to a team
+  const [assignTeamUserId, setAssignTeamUserId] = useState<string | null>(null);
+  const [assignTeamId, setAssignTeamId] = useState("");
+  const [assignTeamTitle, setAssignTeamTitle] = useState("");
+  const [assigning, setAssigning] = useState(false);
 
   useKeyboardShortcuts({
     onEscape: () => {
@@ -105,6 +132,8 @@ export default function TeamsPage() {
       setEditingMemberId(null);
       setAddMemberTeamId(null);
       setAddSubTeamParentId(null);
+      setInvitingMemberId(null);
+      setAssignTeamUserId(null);
     },
   });
 
@@ -126,14 +155,28 @@ export default function TeamsPage() {
         getTeams(companyId),
         isAdmin ? getCompanyUsers(companyId) : Promise.resolve([]),
       ]);
-      setTeams(teamData);
+
+      // Non-admins only see teams they lead
+      const visibleTeams = isAdmin
+        ? teamData
+        : teamData.filter((t) => canManageTeam(profile, t.leaderId));
+
+      setTeams(visibleTeams);
       setUsers(userData);
 
       const memberMap: Record<string, TeamMember[]> = {};
-      for (const t of teamData) {
+      for (const t of visibleTeams) {
         memberMap[t.id] = await getTeamMembers(companyId, t.id);
       }
       setMembers(memberMap);
+
+      // Find users with no linked teamMember record (admin only)
+      if (isAdmin && userData.length > 0) {
+        const allMembers = Object.values(memberMap).flat();
+        const linkedUserIds = new Set(allMembers.filter((m) => m.appUserId).map((m) => m.appUserId));
+        const unlinked = userData.filter((u) => !linkedUserIds.has(u.uid) && (u.isActive ?? true));
+        setUnlinkedUsers(unlinked);
+      }
 
       const topLevel = teamData.find((t) => !t.parentTeamId);
       if (topLevel) setExpandedTeams(new Set([topLevel.id]));
@@ -155,25 +198,36 @@ export default function TeamsPage() {
 
   /** Find a person's known title from team members or leader records */
   function findPersonTitle(name: string): string {
-    // Check team members first
     for (const teamId of Object.keys(members)) {
       const member = members[teamId].find((m) => m.name === name);
       if (member?.role) return member.role;
     }
-    // Check leader titles on teams
     const asLeader = teams.find((t) => t.leaderName === name);
     if (asLeader?.leaderTitle) return asLeader.leaderTitle;
     return "";
   }
 
-  // Get sub-team leaders who should appear as members of this team
-  // Exclude anyone already added as a regular team member
   function getLeadersAsMembers(teamId: string): { name: string; title: string; subTeamName: string }[] {
     const childTeams = teams.filter((t) => t.parentTeamId === teamId);
     const existingMemberNames = new Set((members[teamId] || []).map((m) => m.name));
     return childTeams
       .filter((t) => t.leaderName && !existingMemberNames.has(t.leaderName))
       .map((t) => ({ name: t.leaderName, title: t.leaderTitle || "", subTeamName: t.name }));
+  }
+
+  async function checkDuplicates(name: string, email: string) {
+    if (!companyId || (!name.trim() && !email.trim())) { setDupWarning(""); return; }
+    try {
+      const matches = await findDuplicateMember(companyId, name, email);
+      if (matches.length > 0) {
+        const names = matches.map((m) => m.name).join(", ");
+        setDupWarning(`Possible duplicate: ${names} already exists. You can still proceed.`);
+      } else {
+        setDupWarning("");
+      }
+    } catch {
+      setDupWarning("");
+    }
   }
 
   async function handleCreateSubTeam(parentId: string, parentLevel: number) {
@@ -230,7 +284,6 @@ export default function TeamsPage() {
         leaderName: editTeamLeader.trim(),
         leaderTitle: editTeamLeaderTitle.trim(),
       });
-      // If leader changed, log it on all team members
       if (leaderChanged) {
         await logLeaderChangeForTeamMembers(
           companyId, teamId,
@@ -270,6 +323,7 @@ export default function TeamsPage() {
 
   async function handleAddMember(teamId: string) {
     if (!companyId || !newMemberName.trim()) return;
+    setAddingMember(true);
     try {
       const team = teams.find((t) => t.id === teamId);
       const id = await createTeamMember(companyId, {
@@ -278,25 +332,187 @@ export default function TeamsPage() {
         teamId,
         reportsToUserId: team?.leaderId || profile?.uid || "",
       });
+
+      let isAppUser = false;
+      let appUserId: string | null = null;
+
+      // If invite checked and email provided, create the app user
+      if (newMemberInvite && newMemberEmail.trim()) {
+        try {
+          const res = await fetch("/api/users/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              companyId,
+              email: newMemberEmail.trim(),
+              displayName: newMemberName.trim(),
+              role: isAdmin ? newMemberRole : "leader",
+              title: newMemberTitle.trim(),
+              teamId,
+            }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            isAppUser = true;
+            appUserId = data.uid;
+            // Link the teamMember to the new user
+            await updateTeamMember(companyId, id, { isAppUser: true, appUserId: data.uid });
+            // Refresh users list
+            if (isAdmin) {
+              const updated = await getCompanyUsers(companyId);
+              setUsers(updated);
+              // Remove from unlinked
+              setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== data.uid));
+            }
+          } else {
+            setError(data.error || "Member added but invite failed.");
+          }
+        } catch {
+          setError("Member added but invite email failed.");
+        }
+      }
+
       const newMember = {
         id,
         name: newMemberName.trim(),
         role: newMemberTitle.trim(),
         teamId,
         reportsToUserId: team?.leaderId || "",
-        isAppUser: false,
-        appUserId: null,
+        isAppUser,
+        appUserId,
+        status: "active",
+        archivedAt: null,
+        archivedReason: null,
       } as TeamMember;
-      setMembers({
-        ...members,
-        [teamId]: [...(members[teamId] || []), newMember],
-      });
+
+      setMembers({ ...members, [teamId]: [...(members[teamId] || []), newMember] });
       setNewMemberName("");
       setNewMemberTitle("");
+      setNewMemberEmail("");
+      setNewMemberInvite(false);
+      setNewMemberRole("leader");
+      setDupWarning("");
       setAddMemberTeamId(null);
     } catch {
       setError("Failed to add team member.");
     }
+    setAddingMember(false);
+  }
+
+  async function handleInviteMember(memberId: string, teamId: string) {
+    if (!companyId || !inviteEmail.trim()) return;
+    const member = members[teamId]?.find((m) => m.id === memberId);
+    if (!member) return;
+    setInviting(true);
+    try {
+      const res = await fetch("/api/users/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          email: inviteEmail.trim(),
+          displayName: member.name,
+          role: isAdmin ? inviteRole : "leader",
+          title: member.role,
+          teamId,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        await updateTeamMember(companyId, memberId, { isAppUser: true, appUserId: data.uid });
+        setMembers({
+          ...members,
+          [teamId]: members[teamId].map((m) =>
+            m.id === memberId ? { ...m, isAppUser: true, appUserId: data.uid } : m
+          ),
+        });
+        if (isAdmin) {
+          const updated = await getCompanyUsers(companyId);
+          setUsers(updated);
+          setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== data.uid));
+        }
+        setInvitingMemberId(null);
+        setInviteEmail("");
+        setInviteRole("leader");
+      } else {
+        setError(data.error || "Invite failed.");
+      }
+    } catch {
+      setError("Invite failed.");
+    }
+    setInviting(false);
+  }
+
+  async function handleUserRoleChange(userId: string, newRole: UserRole) {
+    if (!companyId) return;
+    try {
+      await updateUserRole(companyId, userId, newRole);
+      setUsers(users.map((u) => (u.uid === userId ? { ...u, role: newRole } : u)));
+    } catch {
+      setError("Failed to update role.");
+    }
+  }
+
+  async function handleDeactivateUser(userId: string) {
+    if (!companyId) return;
+    if (!window.confirm("Deactivate this user? They will no longer be able to log in.")) return;
+    try {
+      await deactivateUser(companyId, userId);
+      setUsers(users.map((u) => (u.uid === userId ? { ...u, isActive: false } : u)));
+    } catch {
+      setError("Failed to deactivate user.");
+    }
+  }
+
+  async function handleReactivateUser(userId: string) {
+    if (!companyId) return;
+    try {
+      await reactivateUser(companyId, userId);
+      setUsers(users.map((u) => (u.uid === userId ? { ...u, isActive: true } : u)));
+    } catch {
+      setError("Failed to reactivate user.");
+    }
+  }
+
+  async function handleResetPassword(email: string, displayName: string) {
+    try {
+      const res = await fetch("/api/users/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, displayName }),
+      });
+      if (!res.ok) throw new Error();
+      alert(`Password reset email sent to ${email}`);
+    } catch {
+      setError("Failed to send password reset email.");
+    }
+  }
+
+  async function handleAssignUnlinkedUser() {
+    if (!companyId || !assignTeamUserId || !assignTeamId) return;
+    const user = users.find((u) => u.uid === assignTeamUserId);
+    if (!user) return;
+    setAssigning(true);
+    try {
+      const team = teams.find((t) => t.id === assignTeamId);
+      const id = await createTeamMember(companyId, {
+        name: user.displayName,
+        role: assignTeamTitle.trim(),
+        teamId: assignTeamId,
+        reportsToUserId: team?.leaderId || "",
+      });
+      await updateTeamMember(companyId, id, { isAppUser: true, appUserId: user.uid });
+      setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== assignTeamUserId));
+      setAssignTeamUserId(null);
+      setAssignTeamId("");
+      setAssignTeamTitle("");
+      // Refresh members for that team
+      const updatedMembers = await getTeamMembers(companyId, assignTeamId);
+      setMembers((prev) => ({ ...prev, [assignTeamId]: updatedMembers }));
+    } catch {
+      setError("Failed to assign user to team.");
+    }
+    setAssigning(false);
   }
 
   async function handleSaveMember(memberId: string, teamId: string) {
@@ -326,7 +542,6 @@ export default function TeamsPage() {
       setError("Failed to update member.");
     }
   }
-
 
   async function handleArchiveMember() {
     if (!companyId || !archivingMemberId || !archivingTeamId) return;
@@ -368,7 +583,6 @@ export default function TeamsPage() {
     if (!member || !team) return;
     try {
       await promoteToLeader(companyId, promotingMemberId, member.name, member.role, promotingTeamId, team.leaderId, team.leaderName, profile?.uid || "", todayISO, currentFY, currentFQ);
-      // Also log leader change for all team members
       await logLeaderChangeForTeamMembers(companyId, promotingTeamId, team.leaderName, member.name, profile?.uid || "", todayISO, currentFY, currentFQ);
       setTeams(teams.map((t) => t.id === promotingTeamId ? { ...t, leaderId: promotingMemberId, leaderName: member.name, leaderTitle: member.role } : t));
       setPromotingMemberId(null); setPromotingTeamId(null);
@@ -387,6 +601,7 @@ export default function TeamsPage() {
     const indent = team.level ?? 0;
     const isEditingThis = editingTeamId === team.id;
     const totalMembers = teamMembers.length + leaderMembers.length;
+    const canManage = canManageTeam(profile, team.leaderId);
 
     return (
       <div key={team.id} style={{ marginLeft: indent > 0 ? 20 : 0 }}>
@@ -508,6 +723,11 @@ export default function TeamsPage() {
                     const isArchiving = archivingMemberId === m.id;
                     const isChangingTeam = changingTeamMemberId === m.id;
                     const isPromoting = promotingMemberId === m.id;
+                    const isInviting = invitingMemberId === m.id;
+                    // Find linked user for user management controls
+                    const linkedUser = m.isAppUser && m.appUserId ? users.find((u) => u.uid === m.appUserId) : null;
+                    const userIsInactive = linkedUser?.isActive === false;
+
                     return (
                       <div key={m.id} className={`rounded-[4px] border border-brand-gray/50 ${isArchived ? "bg-primary/[0.03] opacity-60" : "bg-white"}`}>
                         <div className="flex items-center gap-3 p-2.5">
@@ -528,8 +748,8 @@ export default function TeamsPage() {
                             </span>
                           ))}
                           {m.isAppUser && (
-                            <span className="rounded-[2px] bg-green-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-green-700">
-                              App User
+                            <span className={`rounded-[2px] px-1.5 py-0.5 text-[9px] font-semibold uppercase ${userIsInactive ? "bg-primary/10 text-primary/40" : "bg-green-100 text-green-700"}`}>
+                              {userIsInactive ? "User (Inactive)" : "User"}
                             </span>
                           )}
                           {!isArchived && (
@@ -548,6 +768,66 @@ export default function TeamsPage() {
                             </>
                           )}
                         </div>
+
+                        {/* User management controls (admin only, for app users) */}
+                        {isAdmin && m.isAppUser && linkedUser && !isArchived && !isEditing && !isArchiving && !isChangingTeam && !isPromoting && !isInviting && (
+                          <div className="border-t border-brand-gray/30 px-2.5 py-2 flex items-center gap-3 bg-green-50/50">
+                            <select
+                              value={linkedUser.role}
+                              onChange={(e) => handleUserRoleChange(linkedUser.uid, e.target.value as UserRole)}
+                              className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary"
+                            >
+                              {ASSIGNABLE_ROLES.map((r) => (
+                                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                              ))}
+                            </select>
+                            <button onClick={() => handleResetPassword(linkedUser.email, linkedUser.displayName)}
+                              className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary">
+                              Reset Password
+                            </button>
+                            {userIsInactive ? (
+                              <button onClick={() => handleReactivateUser(linkedUser.uid)}
+                                className="rounded-[4px] border border-primary bg-transparent px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Reactivate
+                              </button>
+                            ) : (
+                              linkedUser.uid !== profile?.uid && (
+                                <button onClick={() => handleDeactivateUser(linkedUser.uid)}
+                                  className="text-[10px] text-accent/50 transition hover:text-accent">
+                                  Deactivate
+                                </button>
+                              )
+                            )}
+                          </div>
+                        )}
+
+                        {/* Invite as user panel */}
+                        {isInviting && (
+                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
+                            <p className="text-xs font-semibold text-primary/60">Invite {m.name} as an app user</p>
+                            <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                              placeholder="Email address"
+                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                            {isAdmin && (
+                              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as UserRole)}
+                                className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                                {ASSIGNABLE_ROLES.map((r) => (
+                                  <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                                ))}
+                              </select>
+                            )}
+                            <div className="flex gap-2">
+                              <button onClick={() => handleInviteMember(m.id, team.id)} disabled={inviting || !inviteEmail.trim()}
+                                className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                {inviting ? "Sending..." : "Send Invite"}
+                              </button>
+                              <button onClick={() => { setInvitingMemberId(null); setInviteEmail(""); setInviteRole("leader"); }}
+                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Archive confirmation */}
                         {isArchiving && (
@@ -626,7 +906,7 @@ export default function TeamsPage() {
                                   className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                               </div>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 flex-wrap">
                               <button onClick={() => handleSaveMember(m.id, team.id)}
                                 className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
                                 Save
@@ -639,6 +919,12 @@ export default function TeamsPage() {
                                 className="rounded-[4px] border-[1.5px] border-green-600 bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-green-600 transition hover:bg-green-600 hover:text-white">
                                 Promote to Leader
                               </button>
+                              {!m.isAppUser && (
+                                <button onClick={() => { setInvitingMemberId(m.id); setInviteEmail(""); setInviteRole("leader"); setEditingMemberId(null); }}
+                                  className="rounded-[4px] border-[1.5px] border-accent bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-accent transition hover:bg-accent hover:text-white">
+                                  Invite as User
+                                </button>
+                              )}
                             </div>
                           </div>
                         )}
@@ -653,28 +939,57 @@ export default function TeamsPage() {
               )}
 
               {/* Add member */}
-              {addMemberTeamId === team.id ? (
+              {canManage && addMemberTeamId === team.id ? (
                 <div className="mt-2 rounded-[4px] border border-brand-gray/50 bg-primary/[0.02] p-3 space-y-2">
                   <div className="grid grid-cols-2 gap-2">
-                    <input type="text" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)}
-                      placeholder="Name" className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                    <input type="text" value={newMemberName}
+                      onChange={(e) => setNewMemberName(e.target.value)}
+                      onBlur={() => checkDuplicates(newMemberName, newMemberEmail)}
+                      placeholder="Name"
+                      className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                     <input type="text" value={newMemberTitle} onChange={(e) => setNewMemberTitle(e.target.value)}
                       placeholder="Title (e.g., Controller)"
-                      className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary"
-                      onKeyDown={(e) => { if (e.key === "Enter") handleAddMember(team.id); }} />
+                      className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                   </div>
+                  <input type="email" value={newMemberEmail}
+                    onChange={(e) => setNewMemberEmail(e.target.value)}
+                    onBlur={() => checkDuplicates(newMemberName, newMemberEmail)}
+                    placeholder="Email (optional — required to invite as user)"
+                    className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                  {dupWarning && (
+                    <p className="text-[11px] text-yellow-700 bg-yellow-50 rounded-[4px] px-2 py-1">{dupWarning}</p>
+                  )}
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={newMemberInvite}
+                      onChange={(e) => setNewMemberInvite(e.target.checked)}
+                      disabled={!newMemberEmail.trim()}
+                      className="h-3.5 w-3.5 accent-primary" />
+                    <span className="text-xs text-primary/60">Invite as app user</span>
+                    {!newMemberEmail.trim() && <span className="text-[10px] text-primary/30">(enter email first)</span>}
+                  </label>
+                  {newMemberInvite && isAdmin && (
+                    <select value={newMemberRole} onChange={(e) => setNewMemberRole(e.target.value as UserRole)}
+                      className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                      {ASSIGNABLE_ROLES.map((r) => (
+                        <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                      ))}
+                    </select>
+                  )}
+                  {newMemberInvite && !isAdmin && (
+                    <p className="text-[10px] text-primary/40">Will be invited as a Leader.</p>
+                  )}
                   <div className="flex gap-2">
-                    <button onClick={() => handleAddMember(team.id)} disabled={!newMemberName.trim()}
+                    <button onClick={() => handleAddMember(team.id)} disabled={addingMember || !newMemberName.trim()}
                       className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-                      Add
+                      {addingMember ? "Adding..." : "Add"}
                     </button>
-                    <button onClick={() => { setAddMemberTeamId(null); setNewMemberName(""); setNewMemberTitle(""); }}
+                    <button onClick={() => { setAddMemberTeamId(null); setNewMemberName(""); setNewMemberTitle(""); setNewMemberEmail(""); setNewMemberInvite(false); setDupWarning(""); }}
                       className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
                       Cancel
                     </button>
                   </div>
                 </div>
-              ) : (
+              ) : canManage ? (
                 <div className="mt-2 flex gap-3">
                   <button onClick={() => setAddMemberTeamId(team.id)}
                     className="text-xs font-semibold text-accent transition hover:opacity-70">
@@ -687,7 +1002,7 @@ export default function TeamsPage() {
                     </button>
                   )}
                 </div>
-              )}
+              ) : null}
 
               {/* Add sub-team form */}
               {addSubTeamParentId === team.id && (
@@ -768,13 +1083,67 @@ export default function TeamsPage() {
   return (
     <div className="min-h-screen bg-white px-4 py-6 lg:px-8 lg:py-12">
       <div className="mx-auto max-w-3xl">
-        <h1 className="text-2xl font-bold text-primary">Teams & Members</h1>
+        <h1 className="text-2xl font-bold text-primary">Teams & Users</h1>
         <p className="mt-1 text-sm text-primary/50">
-          Organize your team hierarchy. Click a member name to view their profile.
+          Manage your team structure. Add members and optionally invite them as app users.
         </p>
 
+        {/* Unlinked users (admin only) */}
+        {isAdmin && unlinkedUsers.length > 0 && (
+          <div className="mt-6 rounded-[4px] border border-yellow-300 bg-yellow-50 p-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-yellow-800">
+              Unlinked Users ({unlinkedUsers.length})
+            </h2>
+            <p className="mt-1 text-xs text-yellow-700">These users exist in the system but aren&apos;t assigned to a team. Assign them to a team or deactivate if no longer needed.</p>
+            <div className="mt-3 space-y-2">
+              {unlinkedUsers.map((u) => (
+                <div key={u.uid} className="rounded-[4px] border border-yellow-200 bg-white p-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-primary">{u.displayName}</p>
+                      <p className="text-xs text-primary/50">{u.email} · {ROLE_LABELS[u.role]}</p>
+                    </div>
+                    <button onClick={() => { setAssignTeamUserId(u.uid); setAssignTeamId(""); setAssignTeamTitle(""); }}
+                      className="rounded-[4px] bg-primary px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
+                      Assign to Team
+                    </button>
+                    <button onClick={() => handleDeactivateUser(u.uid)}
+                      className="text-xs text-accent/50 transition hover:text-accent">
+                      Deactivate
+                    </button>
+                  </div>
+                  {assignTeamUserId === u.uid && (
+                    <div className="mt-3 space-y-2">
+                      <select value={assignTeamId} onChange={(e) => setAssignTeamId(e.target.value)}
+                        className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                        <option value="">Select team...</option>
+                        {teams.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                      <input type="text" value={assignTeamTitle} onChange={(e) => setAssignTeamTitle(e.target.value)}
+                        placeholder="Title (optional)"
+                        className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                      <div className="flex gap-2">
+                        <button onClick={handleAssignUnlinkedUser} disabled={assigning || !assignTeamId}
+                          className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                          {assigning ? "Assigning..." : "Assign"}
+                        </button>
+                        <button onClick={() => setAssignTeamUserId(null)}
+                          className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Search + filters */}
-        <div className="mt-4 flex items-center gap-4">
+        <div className="mt-6 flex items-center gap-4">
           <input
             type="text"
             value={searchQuery}
@@ -817,7 +1186,7 @@ export default function TeamsPage() {
 
         {error && <p className="mt-4 text-sm text-accent">{error}</p>}
 
-        <div className="mt-6 space-y-3">
+        <div className="mt-4 space-y-3">
           {topLevelTeams.map((team) => renderTeam(team))}
         </div>
 
