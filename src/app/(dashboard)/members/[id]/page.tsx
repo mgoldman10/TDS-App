@@ -85,6 +85,7 @@ export default function MemberSummaryPage() {
   const [difficultCoach, setDifficultCoach] = useState<Coach | null>(null);
   const [showChat, setShowChat] = useState(false);
   const [activeCoach, setActiveCoach] = useState<Coach | null>(null);
+  const [activeCoachIsPeople, setActiveCoachIsPeople] = useState(false);
   const [newNoteText, setNewNoteText] = useState("");
 
   // Target editing state
@@ -122,7 +123,11 @@ export default function MemberSummaryPage() {
       const m = allMembers.find((tm) => tm.id === memberId);
       setMember(m ?? null);
       if (m) setTeam(allTeams.find((t) => t.id === m.teamId) ?? null);
-      setAssessments(assessmentData);
+      // Sort newest-first (year desc, then quarter desc) since the query only orders by year
+      const sortedAssessments = [...assessmentData].sort((a, b) =>
+        b.fiscalYear !== a.fiscalYear ? b.fiscalYear - a.fiscalYear : b.fiscalQuarter - a.fiscalQuarter
+      );
+      setAssessments(sortedAssessments);
       setTargets(targetData);
       setMemberPlan(planData);
       setCoreValues(valuesData);
@@ -315,7 +320,244 @@ export default function MemberSummaryPage() {
       parts.push(`\nRecent Coaching Notes:`);
       recentNotes.forEach((n) => parts.push(`- ${n.text}`));
     }
+
+    // --- Current Quarter Highlights ---
+    if (latestAssessment) {
+      const highlights: string[] = [];
+      const prod = latestAssessment.productivityScore;
+      const fit = latestAssessment.cultureFitScore;
+      const cat = latestAssessment.performanceCategory;
+
+      // Overall performance interpretation
+      if (cat === "HP") {
+        highlights.push(`High Performer — strong contributions across both productivity and culture fit`);
+      } else if (cat === "LP") {
+        highlights.push(`Low Producer — productivity is below expectations and needs attention`);
+      } else if (cat === "LCF") {
+        highlights.push(`Low Culture Fit — productivity may be adequate but culture fit is a concern`);
+      } else {
+        if (prod >= 8.5) highlights.push(`Solid productivity this quarter (${prod.toFixed(1)}/10)`);
+        else if (prod < 6.0) highlights.push(`Productivity below threshold this quarter (${prod.toFixed(1)}/10)`);
+        else highlights.push(`Moderate productivity this quarter (${prod.toFixed(1)}/10)`);
+      }
+
+      if (fit >= 9.0) highlights.push(`Exceptional culture fit score (${fit.toFixed(1)}/10)`);
+      else if (fit < 6.0) highlights.push(`Culture fit score is low (${fit.toFixed(1)}/10) — values alignment may need discussion`);
+
+      // Note a significant gap between productivity and culture fit
+      if (Math.abs(prod - fit) >= 2.0) {
+        if (prod > fit) highlights.push(`Notable gap: productivity (${prod.toFixed(1)}) significantly higher than culture fit (${fit.toFixed(1)})`);
+        else highlights.push(`Notable gap: culture fit (${fit.toFixed(1)}) significantly higher than productivity (${prod.toFixed(1)})`);
+      }
+
+      // Per-target performance vs goal
+      latestAssessment.productivityActuals.forEach((pa) => {
+        const t = targets.find((tgt) => tgt.id === pa.targetId);
+        if (!t || t.target === 0) return;
+        if (t.frequency === "quarterly" && pa.actual != null) {
+          const pct = pa.actual / t.target;
+          const prefix = t.unit === "dollars" ? "$" : "";
+          const suffix = t.unit === "percentage" ? "%" : "";
+          if (t.type === "bigger" && pct >= 1.1) highlights.push(`${pa.targetName}: exceeded target by ${((pct - 1) * 100).toFixed(0)}% (actual: ${prefix}${pa.actual}${suffix}, target: ${prefix}${t.target}${suffix})`);
+          else if (t.type === "bigger" && pct < 0.75) highlights.push(`${pa.targetName}: significantly below target — ${(pct * 100).toFixed(0)}% of goal (actual: ${prefix}${pa.actual}${suffix}, target: ${prefix}${t.target}${suffix})`);
+        }
+      });
+
+      parts.push(`\nCurrent Quarter Highlights:`);
+      highlights.forEach((h) => parts.push(`- ${h}`));
+    }
+
+    // --- Performance Trend (Last 4 Quarters) ---
+    if (assessments.length >= 2) {
+      const recent = assessments.slice(0, 4); // newest first
+      const oldest = recent[recent.length - 1];
+      const newest = recent[0];
+      const prodDelta = newest.productivityScore - oldest.productivityScore;
+      const fitDelta = newest.cultureFitScore - oldest.cultureFitScore;
+      // On a 0–10 scale, ±0.5 is a meaningful change
+      const trendLabel = (delta: number) => delta >= 0.5 ? "IMPROVING" : delta <= -0.5 ? "DECLINING" : "consistent";
+      const quarterLabel = (a: Assessment) => `Q${a.fiscalQuarter} FY${a.fiscalYear}`;
+
+      parts.push(`\nPerformance Trend (Last ${recent.length} Quarters):`);
+      parts.push(`${recent.map(quarterLabel).reverse().join(" → ")}`);
+      parts.push(`Productivity: ${recent.map((a) => a.productivityScore.toFixed(0)).reverse().join(" → ")} (${trendLabel(prodDelta)} ${prodDelta >= 0 ? "+" : ""}${prodDelta.toFixed(0)} pts)`);
+      parts.push(`Culture Fit: ${recent.map((a) => a.cultureFitScore.toFixed(0)).reverse().join(" → ")} (${trendLabel(fitDelta)} ${fitDelta >= 0 ? "+" : ""}${fitDelta.toFixed(0)} pts)`);
+
+      // Category progression
+      const categories = recent.map((a) => CATEGORY_LABELS[a.performanceCategory]).reverse();
+      const allSameCategory = categories.every((c) => c === categories[0]);
+      if (allSameCategory && recent.length >= 3) {
+        parts.push(`Category: consistently ${categories[0]} for ${recent.length} quarters`);
+      } else {
+        parts.push(`Category: ${categories.join(" → ")}`);
+      }
+
+      // Per-target trends — find targets that appear in 2+ assessments
+      const targetTrends: string[] = [];
+      const seenTargetIds = new Set<string>();
+      recent[0].productivityActuals.forEach((pa) => {
+        if (seenTargetIds.has(pa.targetId)) return;
+        seenTargetIds.add(pa.targetId);
+        const t = targets.find((tgt) => tgt.id === pa.targetId);
+        if (!t) return;
+
+        // Gather actuals across quarters (oldest to newest)
+        const history = recent
+          .map((a) => a.productivityActuals.find((x) => x.targetId === pa.targetId))
+          .filter(Boolean)
+          .reverse();
+        if (history.length < 2) return;
+
+        const prefix = t.unit === "dollars" ? "$" : "";
+        const suffix = t.unit === "percentage" ? "%" : "";
+
+        if (t.frequency === "monthly") {
+          const avgs = history.map((h) => {
+            if (!h?.monthlyActuals) return null;
+            const vals = [h.monthlyActuals.month1, h.monthlyActuals.month2, h.monthlyActuals.month3].filter((v) => v != null) as number[];
+            return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+          });
+          const validAvgs = avgs.filter((v) => v != null) as number[];
+          if (validAvgs.length < 2) return;
+          const delta = validAvgs[validAvgs.length - 1] - validAvgs[0];
+          const label = trendLabel(t.type === "bigger" ? delta : -delta);
+          targetTrends.push(`- ${pa.targetName}: ${label} (avg: ${validAvgs.map((v) => `${prefix}${v.toFixed(0)}${suffix}`).join(" → ")})`);
+        } else {
+          const actuals = history.map((h) => h?.actual);
+          const validActuals = actuals.filter((v) => v != null) as number[];
+          if (validActuals.length < 2) return;
+          const delta = validActuals[validActuals.length - 1] - validActuals[0];
+          const label = trendLabel(t.type === "bigger" ? delta : -delta);
+          // Check if consistently hitting/exceeding target
+          const allHitting = validActuals.every((v) => t.type === "bigger" ? v >= t.target : v <= t.target);
+          const noneHitting = validActuals.every((v) => t.type === "bigger" ? v < t.target : v > t.target);
+          const qualifier = allHitting ? " — consistently meeting or exceeding target" : noneHitting ? " — consistently below target" : "";
+          targetTrends.push(`- ${pa.targetName}: ${label} (${validActuals.map((v) => `${prefix}${v}${suffix}`).join(" → ")})${qualifier}`);
+        }
+      });
+      if (targetTrends.length > 0) {
+        parts.push(`\nPer-Target Trends:`);
+        targetTrends.forEach((t) => parts.push(t));
+      }
+
+      // Coaching prompt hint
+      const prodTrend = trendLabel(prodDelta);
+      const fitTrend = trendLabel(fitDelta);
+      const isHighPerformer = newest.performanceCategory === "HP";
+      const isUnderperformer = newest.performanceCategory === "LP" || newest.performanceCategory === "LCF";
+      const hints: string[] = [];
+
+      if (prodTrend === "IMPROVING" && !isUnderperformer) {
+        hints.push("Productivity is trending up. Consider opening by recognizing this improvement — it may be a good time to raise the bar or discuss expanding their scope.");
+      } else if (prodTrend === "DECLINING") {
+        hints.push("Productivity has been declining. Consider asking the leader whether they'd like to focus this session on diagnosing root causes or building a recovery plan.");
+      }
+      if (fitTrend === "DECLINING") {
+        hints.push("Culture fit scores have been declining. This may warrant a conversation about values alignment.");
+      } else if (fitTrend === "IMPROVING") {
+        hints.push("Culture fit is improving — worth acknowledging.");
+      }
+      if (isHighPerformer && prodTrend === "consistent") {
+        hints.push("Consistent High Performer. Consider discussing stretch goals or leadership development opportunities.");
+      }
+      if (isUnderperformer && prodTrend !== "IMPROVING") {
+        hints.push("Persistent underperformance warrants a direct conversation. Consider discussing whether expectations are clear and what specific support is needed.");
+      }
+
+      if (hints.length > 0) {
+        parts.push(`\nNote for coach:`);
+        hints.forEach((h) => parts.push(`- ${h}`));
+      }
+    }
+
     return parts.join("\n");
+  }
+
+  function buildPeopleCoachIntro(): string {
+    if (!latestAssessment || !member) {
+      return peopleCoach?.chatIntro ?? "I'm here to assist you with coaching strategies for any situation. How can I help?";
+    }
+    const firstName = member.name.split(" ")[0];
+    const cat = latestAssessment.performanceCategory;
+    const prod = latestAssessment.productivityScore;
+
+    // Trend direction across available quarters
+    let trendUp = false;
+    let trendDown = false;
+    if (assessments.length >= 2) {
+      const recent = assessments.slice(0, 4);
+      const prodDelta = recent[0].productivityScore - recent[recent.length - 1].productivityScore;
+      if (prodDelta >= 0.5) trendUp = true;
+      else if (prodDelta <= -0.5) trendDown = true;
+    }
+
+    // Best and worst quarterly productivity targets by % of goal
+    const ratingOrder: Record<string, number> = { models: 4, lives: 3, occasional: 2, frequent: 1 };
+    type TargetPerf = { name: string; pct: number };
+    const targetPerfs: TargetPerf[] = [];
+    latestAssessment.productivityActuals.forEach((pa) => {
+      const t = targets.find((tgt) => tgt.id === pa.targetId);
+      if (!t || t.target === 0 || t.frequency !== "quarterly" || pa.actual == null) return;
+      const pct = t.type === "bigger" ? pa.actual / t.target : t.target / Math.max(pa.actual, 0.01);
+      targetPerfs.push({ name: pa.targetName, pct });
+    });
+    targetPerfs.sort((a, b) => b.pct - a.pct);
+    const bestTarget = targetPerfs.length > 0 && targetPerfs[0].pct >= 1.0 ? targetPerfs[0] : null;
+    const worstTarget = targetPerfs.length > 0 && targetPerfs[targetPerfs.length - 1].pct < 0.85 ? targetPerfs[targetPerfs.length - 1] : null;
+
+    // Best and worst core values by rating
+    const ratedCVs = latestAssessment.cultureFitScores.filter((cfs) => cfs.rating);
+    ratedCVs.sort((a, b) => (ratingOrder[b.rating] ?? 0) - (ratingOrder[a.rating] ?? 0));
+    const bestCV = ratedCVs.length > 0 && ratedCVs[0].rating === "models" ? ratedCVs[0] : null;
+    const worstCV = ratedCVs.length > 0 && (ratedCVs[ratedCVs.length - 1].rating === "occasional" || ratedCVs[ratedCVs.length - 1].rating === "frequent") ? ratedCVs[ratedCVs.length - 1] : null;
+
+    // Build intro + specific detail + closing
+    let intro = "";
+    let detail = "";
+    let closing = "What would you like to focus on in your next coaching conversation?";
+
+    if (cat === "HP") {
+      intro = trendUp
+        ? `${firstName} is on a roll — they're a High Performer and productivity keeps improving!`
+        : `Looks like ${firstName} is doing great — they're a High Performer this quarter!`;
+      if (bestTarget) detail = ` ${bestTarget.name} is a real standout.`;
+      else if (bestCV) detail = ` They really seem to model ${bestCV.coreValueName}.`;
+
+    } else if (cat === "LP") {
+      intro = trendDown
+        ? `It looks like ${firstName} has been struggling — productivity has been slipping over the last few quarters.`
+        : `It looks like ${firstName} is having a tough quarter on productivity.`;
+      if (worstTarget) detail = ` ${worstTarget.name} is significantly behind target.`;
+      else if (worstCV) detail = ` There also seem to be some concerns around ${worstCV.coreValueName}.`;
+      closing = "Want to talk through how to approach the coaching conversation?";
+
+    } else if (cat === "LCF") {
+      intro = `It looks like ${firstName} may have some culture fit concerns worth discussing.`;
+      if (worstCV) detail = ` ${worstCV.coreValueName} seems to be the main area of concern.`;
+      closing = "How can I help you prepare for that conversation?";
+
+    } else {
+      // MP
+      if (trendUp) {
+        intro = `Good news — ${firstName}'s productivity has been trending up!`;
+        if (bestTarget) detail = ` ${bestTarget.name} is looking particularly strong.`;
+      } else if (trendDown) {
+        intro = `It looks like ${firstName}'s productivity has been slipping a bit recently.`;
+        if (worstTarget) detail = ` ${worstTarget.name} seems to be the main area of concern.`;
+        closing = "Want to talk through how to address it?";
+      } else if (prod < 6.0) {
+        intro = `It looks like ${firstName} is struggling with productivity this quarter.`;
+        if (worstTarget) detail = ` ${worstTarget.name} is significantly behind target.`;
+        closing = "Want to talk through how to approach the coaching conversation?";
+      } else {
+        intro = `${firstName} is performing at the Medium Performer level this quarter — there's definitely room to grow.`;
+        if (worstCV) detail = ` One area to focus on: ${worstCV.coreValueName}.`;
+        else if (worstTarget) detail = ` ${worstTarget.name} might be worth discussing.`;
+        else if (bestTarget) detail = ` ${bestTarget.name} is a bright spot, but there's still room to develop.`;
+      }
+    }
+
+    return `${intro}${detail} ${closing}`;
   }
 
   async function handleAddTarget() {
@@ -502,10 +744,10 @@ export default function MemberSummaryPage() {
             {(peopleCoach || difficultCoach) && (
               <div className="mt-4 flex flex-wrap gap-3">
                 {peopleCoach && (
-                  <AskMikeButton label="AskMike People Coach" onClick={() => { setActiveCoach(peopleCoach); setShowChat(true); }} />
+                  <AskMikeButton label="AskMike People Coach" onClick={() => { setActiveCoach(peopleCoach); setActiveCoachIsPeople(true); setShowChat(true); }} />
                 )}
                 {difficultCoach && (
-                  <AskMikeButton label="AskMike Difficult Conversations Coach" onClick={() => { setActiveCoach(difficultCoach); setShowChat(true); }} />
+                  <AskMikeButton label="AskMike Difficult Conversations Coach" onClick={() => { setActiveCoach(difficultCoach); setActiveCoachIsPeople(false); setShowChat(true); }} />
                 )}
               </div>
             )}
@@ -765,9 +1007,10 @@ export default function MemberSummaryPage() {
         {/* AskMike ChatPanel */}
         {activeCoach && (
           <ChatPanel
+            key={activeCoach.id}
             coachId={activeCoach.id}
             coachName={activeCoach.name}
-            chatIntro={activeCoach.chatIntro}
+            chatIntro={activeCoachIsPeople ? buildPeopleCoachIntro() : activeCoach.chatIntro}
             context={buildCoachContext()}
             isOpen={showChat}
             onClose={() => setShowChat(false)}
