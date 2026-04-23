@@ -45,6 +45,22 @@ export async function deactivateUser(
   await updateDoc(doc(db, "companies", companyId, "users", userId), { isActive: false });
 }
 
+export async function updateUserEmail(
+  companyId: string,
+  userId: string,
+  newEmail: string,
+  displayName: string
+): Promise<{ error?: string }> {
+  const res = await fetch("/api/users/update-email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ companyId, userId, newEmail, displayName }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { error: data.error ?? "Failed to update email." };
+  return {};
+}
+
 /** Reactivate a previously deactivated user */
 export async function reactivateUser(
   companyId: string,

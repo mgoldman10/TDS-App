@@ -9,7 +9,7 @@ import { getCoreValues } from "@/lib/corevalue-service";
 import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { getTargetsForMember } from "@/lib/productivity-service";
 import { calculateCultureFitScore } from "@/lib/culture-fit-scoring";
-import { calculateTotalProductivityScore } from "@/lib/productivity-scoring";
+import { calculateTotalProductivityScore, validateWeights } from "@/lib/productivity-scoring";
 import { assignCategory } from "@/lib/category-scoring";
 import {
   getAssessmentForMember,
@@ -189,6 +189,7 @@ export default function AssessmentsPage() {
     }
   }
   const productivityScore = calculateTotalProductivityScore(targets, productivityActualsMap);
+  const { total: weightTotal, valid: weightsValid } = targets.length > 0 ? validateWeights(targets) : { total: 0, valid: true };
   const allCoreValuesRated = cultureFitScores.length > 0 && cultureFitScores.every((s) => s.rating);
   const isComplete = allCoreValuesRated;
   const category = isComplete ? assignCategory(cultureFitResult.finalScore, productivityScore, scoringParams) : null;
@@ -394,13 +395,20 @@ export default function AssessmentsPage() {
                   )}
                 </div>
                 <div className="flex-1" />
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="rounded-[4px] bg-primary px-6 py-2 font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50"
-                >
-                  {saving ? "Saving..." : existingAssessment ? "Update Assessment" : "Save Assessment"}
-                </button>
+                <div className="flex flex-col items-end gap-1">
+                  {!weightsValid && targets.length > 0 && (
+                    <p className="text-xs text-accent">
+                      Target productivity weights total {weightTotal}% — must equal 100% before saving.
+                    </p>
+                  )}
+                  <button
+                    onClick={handleSave}
+                    disabled={saving || !weightsValid}
+                    className="rounded-[4px] bg-primary px-6 py-2 font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50"
+                  >
+                    {saving ? "Saving..." : existingAssessment ? "Update Assessment" : "Save Assessment"}
+                  </button>
+                </div>
               </div>
             </div>
 

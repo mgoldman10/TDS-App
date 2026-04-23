@@ -16,12 +16,15 @@ import {
   updateTeamMember,
   logMemberChange,
   archiveMember,
+  unarchiveMember,
+  deleteTeamMember,
   changeTeam,
   promoteToLeader,
   logLeaderChangeForTeamMembers,
   findDuplicateMember,
 } from "@/lib/team-service";
-import { getCompanyUsers, updateUserRole, deactivateUser, reactivateUser } from "@/lib/user-service";
+import { getAssessmentHistory } from "@/lib/assessment-service";
+import { getCompanyUsers, updateUserRole, deactivateUser, reactivateUser, updateUserEmail } from "@/lib/user-service";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { Team, TeamMember } from "@/types/team";
@@ -71,6 +74,7 @@ export default function TeamsPage() {
   const [archivingMemberId, setArchivingMemberId] = useState<string | null>(null);
   const [archivingTeamId, setArchivingTeamId] = useState<string | null>(null);
   const [archiveReason, setArchiveReason] = useState("");
+  const [archiveMemberHasAssessments, setArchiveMemberHasAssessments] = useState<boolean | null>(null);
 
   // Change team modal state
   const [changingTeamMemberId, setChangingTeamMemberId] = useState<string | null>(null);
@@ -113,6 +117,12 @@ export default function TeamsPage() {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editTitle, setEditTitle] = useState("");
+
+  // Edit user email
+  const [editingEmailUserId, setEditingEmailUserId] = useState<string | null>(null);
+  const [editEmail, setEditEmail] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [emailSaving, setEmailSaving] = useState(false);
 
   // Invite existing member as user
   const [invitingMemberId, setInvitingMemberId] = useState<string | null>(null);
@@ -488,6 +498,20 @@ export default function TeamsPage() {
     }
   }
 
+  async function handleUpdateEmail(userId: string, displayName: string) {
+    if (!companyId) return;
+    setEmailError("");
+    setEmailSaving(true);
+    const result = await updateUserEmail(companyId, userId, editEmail.trim(), displayName);
+    if (result.error) {
+      setEmailError(result.error);
+    } else {
+      setUsers(users.map((u) => (u.uid === userId ? { ...u, email: editEmail.trim() } : u)));
+      setEditingEmailUserId(null);
+    }
+    setEmailSaving(false);
+  }
+
   async function handleAssignUnlinkedUser() {
     if (!companyId || !assignTeamUserId || !assignTeamId) return;
     const user = users.find((u) => u.uid === assignTeamUserId);
@@ -555,6 +579,24 @@ export default function TeamsPage() {
       });
       setArchivingMemberId(null); setArchivingTeamId(null); setArchiveReason("");
     } catch { setError("Failed to archive member."); }
+  }
+
+  async function handleUnarchiveMember(memberId: string, teamId: string) {
+    if (!companyId) return;
+    try {
+      await unarchiveMember(companyId, memberId, profile?.uid || "", todayISO, currentFY, currentFQ);
+      setMembers({ ...members, [teamId]: members[teamId].map((m) => m.id === memberId ? { ...m, status: "active" as const, archivedAt: null, archivedReason: null } : m) });
+    } catch { setError("Failed to unarchive member."); }
+  }
+
+  async function handleDeleteMember() {
+    if (!companyId || !archivingMemberId || !archivingTeamId) return;
+    if (!window.confirm("Permanently delete this team member? This cannot be undone.")) return;
+    try {
+      await deleteTeamMember(companyId, archivingMemberId);
+      setMembers({ ...members, [archivingTeamId]: members[archivingTeamId].filter((m) => m.id !== archivingMemberId) });
+      setArchivingMemberId(null); setArchivingTeamId(null); setArchiveReason("");
+    } catch { setError("Failed to delete member."); }
   }
 
   async function handleChangeTeam() {
@@ -738,9 +780,17 @@ export default function TeamsPage() {
                             {m.role && <span className="ml-2 text-xs text-primary/50">{m.role}</span>}
                           </div>
                           {isArchived && (
-                            <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/50">
-                              Archived{m.archivedReason ? ` — ${m.archivedReason}` : ""}
-                            </span>
+                            <>
+                              <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/50">
+                                Archived{m.archivedReason ? ` — ${m.archivedReason}` : ""}
+                              </span>
+                              {isAdmin && (
+                                <button onClick={() => handleUnarchiveMember(m.id, team.id)}
+                                  className="rounded-[4px] border border-brand-gray bg-white px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary/50 transition hover:border-primary hover:text-primary">
+                                  Unarchive
+                                </button>
+                              )}
+                            </>
                           )}
                           {leadsTeams.map((lt) => (
                             <span key={lt.id} className="rounded-[2px] bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-blue-700">
@@ -761,8 +811,11 @@ export default function TeamsPage() {
                                 className="text-xs text-primary/50 transition hover:text-primary" title="Edit">
                                 {isEditing ? "▲" : "✎"}
                               </button>
-                              <button onClick={() => { setArchivingMemberId(m.id); setArchivingTeamId(team.id); setArchiveReason(""); }}
-                                className="text-xs text-accent/50 transition hover:text-accent" title="Archive member">
+                              <button onClick={() => {
+                                setArchivingMemberId(m.id); setArchivingTeamId(team.id); setArchiveReason("");
+                                setArchiveMemberHasAssessments(null);
+                                if (companyId) getAssessmentHistory(companyId, m.id).then((a) => setArchiveMemberHasAssessments(a.length > 0));
+                              }} className="text-xs text-accent/50 transition hover:text-accent" title="Archive member">
                                 ✕
                               </button>
                             </>
@@ -771,33 +824,74 @@ export default function TeamsPage() {
 
                         {/* User management controls (admin only, for app users) */}
                         {isAdmin && m.isAppUser && linkedUser && !isArchived && !isEditing && !isArchiving && !isChangingTeam && !isPromoting && !isInviting && (
-                          <div className="border-t border-brand-gray/30 px-2.5 py-2 flex items-center gap-3 bg-green-50/50">
-                            <select
-                              value={linkedUser.role}
-                              onChange={(e) => handleUserRoleChange(linkedUser.uid, e.target.value as UserRole)}
-                              className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary"
-                            >
-                              {ASSIGNABLE_ROLES.map((r) => (
-                                <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                              ))}
-                            </select>
-                            <button onClick={() => handleResetPassword(linkedUser.email, linkedUser.displayName)}
-                              className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary">
-                              Reset Password
-                            </button>
-                            {userIsInactive ? (
-                              <button onClick={() => handleReactivateUser(linkedUser.uid)}
-                                className="rounded-[4px] border border-primary bg-transparent px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                                Reactivate
+                          <div className="border-t border-brand-gray/30 bg-green-50/50">
+                            {/* Email row */}
+                            <div className="px-2.5 py-2 flex items-center gap-2">
+                              <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Email</span>
+                              {editingEmailUserId === linkedUser.uid ? (
+                                <div className="flex flex-1 flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="email"
+                                      value={editEmail}
+                                      onChange={(e) => setEditEmail(e.target.value)}
+                                      className="flex-1 rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] text-primary outline-none focus:border-primary"
+                                    />
+                                    <button
+                                      onClick={() => handleUpdateEmail(linkedUser.uid, linkedUser.displayName)}
+                                      disabled={emailSaving}
+                                      className="rounded-[4px] bg-primary px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                      {emailSaving ? "Saving..." : "Save"}
+                                    </button>
+                                    <button
+                                      onClick={() => { setEditingEmailUserId(null); setEmailError(""); }}
+                                      className="text-[10px] text-primary/40 transition hover:text-primary">
+                                      Cancel
+                                    </button>
+                                  </div>
+                                  {emailError && <p className="text-[10px] text-accent">{emailError}</p>}
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="text-[10px] text-primary/70">{linkedUser.email}</span>
+                                  <button
+                                    onClick={() => { setEditingEmailUserId(linkedUser.uid); setEditEmail(linkedUser.email); setEmailError(""); }}
+                                    className="text-[10px] text-primary/40 transition hover:text-primary"
+                                    title="Edit email">
+                                    ✎
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            {/* Role / password / deactivate row */}
+                            <div className="border-t border-brand-gray/20 px-2.5 py-2 flex items-center gap-3">
+                              <select
+                                value={linkedUser.role}
+                                onChange={(e) => handleUserRoleChange(linkedUser.uid, e.target.value as UserRole)}
+                                className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary"
+                              >
+                                {ASSIGNABLE_ROLES.map((r) => (
+                                  <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                                ))}
+                              </select>
+                              <button onClick={() => handleResetPassword(linkedUser.email, linkedUser.displayName)}
+                                className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary">
+                                Reset Password
                               </button>
-                            ) : (
-                              linkedUser.uid !== profile?.uid && (
-                                <button onClick={() => handleDeactivateUser(linkedUser.uid)}
-                                  className="text-[10px] text-accent/50 transition hover:text-accent">
-                                  Deactivate
+                              {userIsInactive ? (
+                                <button onClick={() => handleReactivateUser(linkedUser.uid)}
+                                  className="rounded-[4px] border border-primary bg-transparent px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                  Reactivate
                                 </button>
-                              )
-                            )}
+                              ) : (
+                                linkedUser.uid !== profile?.uid && (
+                                  <button onClick={() => handleDeactivateUser(linkedUser.uid)}
+                                    className="text-[10px] text-accent/50 transition hover:text-accent">
+                                    Deactivate
+                                  </button>
+                                )
+                              )}
+                            </div>
                           </div>
                         )}
 
@@ -832,21 +926,37 @@ export default function TeamsPage() {
                         {/* Archive confirmation */}
                         {isArchiving && (
                           <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
-                            <p className="text-xs font-semibold text-primary/60">Archive {m.name}?</p>
-                            <p className="text-[10px] text-primary/40">Their assessment history will be preserved for TDI reporting.</p>
-                            <input type="text" value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
-                              placeholder="Reason (e.g., Left company, Terminated)"
-                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                            <div className="flex gap-2">
-                              <button onClick={handleArchiveMember}
-                                className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
-                                Archive
-                              </button>
-                              <button onClick={() => { setArchivingMemberId(null); setArchivingTeamId(null); }}
-                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                                Cancel
-                              </button>
-                            </div>
+                            {archiveMemberHasAssessments === null ? (
+                              <p className="text-[10px] text-primary/40 animate-pulse">Checking assessment history...</p>
+                            ) : (
+                              <>
+                                <p className="text-xs font-semibold text-primary/60">Archive {m.name}?</p>
+                                {archiveMemberHasAssessments ? (
+                                  <p className="text-[10px] text-primary/40">Their assessment history will be preserved for TDI reporting.</p>
+                                ) : (
+                                  <p className="text-[10px] text-primary/40">No assessments found — you can archive this member to preserve their record, or permanently delete if they were entered in error.</p>
+                                )}
+                                <input type="text" value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
+                                  placeholder="Reason (e.g., Left company, Terminated)"
+                                  className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                                <div className="flex gap-2">
+                                  <button onClick={handleArchiveMember}
+                                    className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
+                                    Archive
+                                  </button>
+                                  {!archiveMemberHasAssessments && (
+                                    <button onClick={handleDeleteMember}
+                                      className="rounded-[4px] border-[1.5px] border-accent bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-accent transition hover:bg-accent hover:text-white">
+                                      Delete
+                                    </button>
+                                  )}
+                                  <button onClick={() => { setArchivingMemberId(null); setArchivingTeamId(null); }}
+                                    className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                    Cancel
+                                  </button>
+                                </div>
+                              </>
+                            )}
                           </div>
                         )}
 

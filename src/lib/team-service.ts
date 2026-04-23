@@ -221,6 +221,24 @@ export async function archiveMember(
   await logMemberChange(companyId, memberId, "archived", "active", reason, changedByUserId, effectiveDate, fiscalYear, fiscalQuarter);
 }
 
+/** Restore an archived team member to active */
+export async function unarchiveMember(
+  companyId: string,
+  memberId: string,
+  changedByUserId: string,
+  effectiveDate: string,
+  fiscalYear: number,
+  fiscalQuarter: number
+): Promise<void> {
+  await updateDoc(doc(db, "companies", companyId, "teamMembers", memberId), {
+    status: "active",
+    archivedAt: null,
+    archivedReason: null,
+    updatedAt: serverTimestamp(),
+  });
+  await logMemberChange(companyId, memberId, "archived", "active", "Unarchived", changedByUserId, effectiveDate, fiscalYear, fiscalQuarter);
+}
+
 /** Change a team member's team */
 export async function changeTeam(
   companyId: string,

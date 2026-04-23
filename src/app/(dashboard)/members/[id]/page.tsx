@@ -201,6 +201,7 @@ export default function MemberSummaryPage() {
   const openActions = (memberPlan?.actions ?? []).filter((a: ActionItem) => !a.completedAt).sort((a: ActionItem, b: ActionItem) => (a.targetDate || "9999") < (b.targetDate || "9999") ? -1 : 1);
   const completedActions = (memberPlan?.actions ?? []).filter((a: ActionItem) => a.completedAt);
   const { total: weightTotal, valid: weightsValid } = validateWeights(targets);
+  const isArchived = member?.status === "archived";
 
   // Handlers
   function updateCultureFitRating(coreValueId: string, rating: CultureFitRating) {
@@ -688,19 +689,20 @@ export default function MemberSummaryPage() {
                 const actionIdx = memberPlan?.actions.indexOf(a) ?? -1;
                 return (
                   <div key={i} className="mt-2 flex items-center gap-3 rounded-[4px] border border-brand-gray/50 p-2.5">
-                    <input type="checkbox" checked={false} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
+                    <input type="checkbox" checked={false} disabled={isArchived} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
                     <span className="flex-1 text-sm text-primary">{a.description}</span>
                     <select
                       value={a.owner ?? ""}
+                      disabled={isArchived}
                       onChange={(e) => { if (actionIdx >= 0) handleChangeOwner(actionIdx, e.target.value); }}
-                      className="rounded-[2px] border border-brand-gray/50 bg-white px-1.5 py-0.5 text-[10px] text-primary/60 outline-none"
+                      className="rounded-[2px] border border-brand-gray/50 bg-white px-1.5 py-0.5 text-[10px] text-primary/60 outline-none disabled:opacity-50"
                     >
                       <option value="">Unassigned</option>
                       {profile?.displayName && <option value={profile.displayName}>{profile.displayName}</option>}
                       {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
                     </select>
                     {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
-                    <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>
+                    {!isArchived && <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
                   </div>
                 );
               })}
@@ -711,31 +713,33 @@ export default function MemberSummaryPage() {
                     const actionIdx = memberPlan?.actions.indexOf(a) ?? -1;
                     return (
                       <div key={i} className="mt-1 flex items-center gap-3 rounded-[4px] border border-brand-gray/30 p-2.5 opacity-60">
-                        <input type="checkbox" checked={true} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
+                        <input type="checkbox" checked={true} disabled={isArchived} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
                         <span className="flex-1 text-sm text-primary line-through">{a.description}</span>
                         {a.owner && <span className="text-[10px] text-primary/30">{a.owner}</span>}
-                        <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>
+                        {!isArchived && <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
                       </div>
                     );
                   })}
                 </div>
               )}
-              <div className="mt-3 flex flex-col sm:flex-row gap-2">
-                <input type="text" value={newActionDesc} onChange={(e) => setNewActionDesc(e.target.value)} placeholder="New action item..."
-                  className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddAction(); }} />
-                <div className="flex gap-2">
-                  <select
-                    value={newActionOwner}
-                    onChange={(e) => setNewActionOwner(e.target.value)}
-                    className="flex-1 sm:flex-none rounded-[4px] border border-brand-gray bg-white px-2 py-1.5 text-xs text-primary outline-none focus:border-primary"
-                  >
-                    <option value="">{profile?.displayName ?? "Me"}</option>
-                    {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
-                  </select>
-                  <input type="date" value={newActionDate} onChange={(e) => setNewActionDate(e.target.value)} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                  <button onClick={handleAddAction} disabled={!newActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add</button>
+              {!isArchived && (
+                <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                  <input type="text" value={newActionDesc} onChange={(e) => setNewActionDesc(e.target.value)} placeholder="New action item..."
+                    className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddAction(); }} />
+                  <div className="flex gap-2">
+                    <select
+                      value={newActionOwner}
+                      onChange={(e) => setNewActionOwner(e.target.value)}
+                      className="flex-1 sm:flex-none rounded-[4px] border border-brand-gray bg-white px-2 py-1.5 text-xs text-primary outline-none focus:border-primary"
+                    >
+                      <option value="">{profile?.displayName ?? "Me"}</option>
+                      {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
+                    </select>
+                    <input type="date" value={newActionDate} onChange={(e) => setNewActionDate(e.target.value)} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                    <button onClick={handleAddAction} disabled={!newActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add</button>
+                  </div>
                 </div>
-              </div>
+              )}
               {memberPlan && memberPlan.notes.length > 0 && (
                 <div className="mt-4 border-t border-brand-gray pt-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/30">Coaching Notes</p>
@@ -744,11 +748,13 @@ export default function MemberSummaryPage() {
                   ))}
                 </div>
               )}
-              <div className="mt-3 flex flex-col sm:flex-row gap-2">
-                <input type="text" value={newNoteText} onChange={(e) => setNewNoteText(e.target.value)} placeholder="Add a coaching note..."
-                  className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddNote(); }} />
-                <button onClick={handleAddNote} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add Note</button>
-              </div>
+              {!isArchived && (
+                <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                  <input type="text" value={newNoteText} onChange={(e) => setNewNoteText(e.target.value)} placeholder="Add a coaching note..."
+                    className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddNote(); }} />
+                  <button onClick={handleAddNote} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add Note</button>
+                </div>
+              )}
             </div>
 
             {/* AskMike Coaches */}
@@ -864,12 +870,12 @@ export default function MemberSummaryPage() {
 
             <div className="mt-4 flex items-center gap-4">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={quarterIncomplete} onChange={(e) => { setQuarterIncomplete(e.target.checked); if (!e.target.checked) setCompletedMonths(1); }} className="h-4 w-4 accent-primary" />
+                <input type="checkbox" checked={quarterIncomplete} disabled={isArchived} onChange={(e) => { setQuarterIncomplete(e.target.checked); if (!e.target.checked) setCompletedMonths(1); }} className="h-4 w-4 accent-primary disabled:opacity-50" />
                 <span className="text-sm text-primary">Quarter incomplete?</span>
               </label>
               {quarterIncomplete && (
-                <select value={completedMonths} onChange={(e) => setCompletedMonths(Number(e.target.value) as 1 | 2)}
-                  className="rounded-[4px] border border-brand-gray bg-white px-3 py-1 text-sm font-semibold text-primary outline-none focus:border-primary">
+                <select value={completedMonths} disabled={isArchived} onChange={(e) => setCompletedMonths(Number(e.target.value) as 1 | 2)}
+                  className="rounded-[4px] border border-brand-gray bg-white px-3 py-1 text-sm font-semibold text-primary outline-none focus:border-primary disabled:opacity-50">
                   <option value={1}>1 month</option>
                   <option value={2}>2 months</option>
                 </select>
@@ -887,10 +893,19 @@ export default function MemberSummaryPage() {
                   : <span className="inline-block rounded-[4px] border border-brand-gray px-3 py-1 text-sm text-primary/40">Rate all core values</span>}
               </div>
               <div className="flex-1" />
-              <button onClick={handleSaveAssessment} disabled={assessmentSaving}
-                className="rounded-[4px] bg-primary px-6 py-2 font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-                {assessmentSaving ? "Saving..." : existingAssessment ? "Update" : "Save"}
-              </button>
+              {!isArchived && (
+                <div className="flex flex-col items-end gap-1">
+                  {!weightsValid && targets.length > 0 && (
+                    <p className="text-xs text-accent">
+                      Target productivity weights total {weightTotal}% — must equal 100% before saving.
+                    </p>
+                  )}
+                  <button onClick={handleSaveAssessment} disabled={assessmentSaving || !weightsValid}
+                    className="rounded-[4px] bg-primary px-6 py-2 font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                    {assessmentSaving ? "Saving..." : existingAssessment ? "Update" : "Save"}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
@@ -903,8 +918,8 @@ export default function MemberSummaryPage() {
                       <p className="text-sm font-semibold text-primary">{cfs.coreValueName}</p>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {RATINGS.map((r) => (
-                          <button key={r} onClick={() => updateCultureFitRating(cfs.coreValueId, r)}
-                            className={`rounded-[4px] px-3 py-1.5 text-xs font-semibold transition ${cfs.rating === r ? r === "frequent" ? "bg-red-500 text-white" : r === "occasional" ? "bg-yellow-400 text-primary" : "bg-green-500 text-white" : "border border-brand-gray bg-white text-primary/60 hover:bg-primary/5"}`}>
+                          <button key={r} onClick={() => !isArchived && updateCultureFitRating(cfs.coreValueId, r)} disabled={isArchived}
+                            className={`rounded-[4px] px-3 py-1.5 text-xs font-semibold transition disabled:cursor-default ${cfs.rating === r ? r === "frequent" ? "bg-red-500 text-white" : r === "occasional" ? "bg-yellow-400 text-primary" : "bg-green-500 text-white" : "border border-brand-gray bg-white text-primary/60 hover:bg-primary/5"}`}>
                             {RATING_LABELS[r]} ({ratingScores[r]})
                           </button>
                         ))}
@@ -937,9 +952,10 @@ export default function MemberSummaryPage() {
                             <div className="relative mt-1">
                               {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
                               <input type="text" value={pa?.actual === null ? "" : formatNumber(pa?.actual ?? 0)}
+                                disabled={isArchived}
                                 onChange={(e) => { const raw = stripCommas(e.target.value); updateProductivityActual(t.id, raw === "" ? null : parseFloat(raw) || 0); }}
                                 placeholder="Enter actual"
-                                className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
+                                className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                               {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                             </div>
                           </div>
@@ -956,9 +972,10 @@ export default function MemberSummaryPage() {
                                   <div className="relative flex-1">
                                     {prefix && <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-primary/40">{prefix}</span>}
                                     <input type="text" value={mVal === null ? "" : formatNumber(mVal ?? 0)}
+                                      disabled={isArchived}
                                       onChange={(e) => { const raw = stripCommas(e.target.value); updateMonthlyActual(t.id, m, raw === "" ? null : parseFloat(raw) || 0); }}
                                       placeholder="Actual"
-                                      className={`w-full rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-xs text-primary outline-none focus:border-primary ${prefix ? "pl-5" : ""} ${suffix ? "pr-5" : ""}`} />
+                                      className={`w-full rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-xs text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-5" : ""} ${suffix ? "pr-5" : ""}`} />
                                     {suffix && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-primary/40">{suffix}</span>}
                                   </div>
                                 </div>
@@ -1001,10 +1018,10 @@ export default function MemberSummaryPage() {
                       <span className="ml-2 text-xs text-primary/40">{t.weight}% · {t.type === "bigger" ? "Bigger" : "Smaller"} · {t.frequency === "monthly" ? "Monthly" : "Quarterly"}</span>
                     </button>
                     <button onClick={() => setExpandedTargetId(expandedTargetId === t.id ? null : t.id)} className="text-sm text-primary/50">{expandedTargetId === t.id ? "▲" : "▼"}</button>
-                    <button onClick={() => handleDeleteTarget(t.id)} className="text-xs text-accent/50 transition hover:text-accent">✕</button>
+                    {!isArchived && <button onClick={() => handleDeleteTarget(t.id)} className="text-xs text-accent/50 transition hover:text-accent">✕</button>}
                   </div>
                   {expandedTargetId === t.id && (
-                    <TargetEditor target={t} onSave={(u) => handleSaveTarget(t.id, u)} saving={targetSaving} />
+                    <TargetEditor target={t} onSave={(u) => handleSaveTarget(t.id, u)} saving={targetSaving} readOnly={isArchived} />
                   )}
                 </div>
               ))}
@@ -1012,7 +1029,7 @@ export default function MemberSummaryPage() {
 
             {targets.length === 0 && <p className="mt-4 text-sm text-primary/40">No productivity targets yet.</p>}
 
-            <button onClick={handleAddTarget} className="mt-4 rounded-[4px] bg-accent px-6 py-3 font-semibold uppercase tracking-wider text-white transition hover:opacity-90">+ Add Target</button>
+            {!isArchived && <button onClick={handleAddTarget} className="mt-4 rounded-[4px] bg-accent px-6 py-3 font-semibold uppercase tracking-wider text-white transition hover:opacity-90">+ Add Target</button>}
           </>
         )}
         {/* AskMike ChatPanel */}
@@ -1040,7 +1057,7 @@ export default function MemberSummaryPage() {
 }
 
 // --- Inline Target Editor ---
-function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; onSave: (u: Partial<ProductivityTarget>) => void; saving: boolean }) {
+function TargetEditor({ target, onSave, saving, readOnly = false }: { target: ProductivityTarget; onSave: (u: Partial<ProductivityTarget>) => void; saving: boolean; readOnly?: boolean }) {
   const [name, setName] = useState(target.name);
   const [type, setType] = useState<TargetType>(target.type);
   const [unit, setUnit] = useState<UnitType>(target.unit);
@@ -1075,33 +1092,33 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
     <div className="border-t border-brand-gray px-4 pb-4 pt-3 space-y-4">
       <div>
         <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">KPI Name</label>
-        <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Revenue"
-          className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary" />
+        <input type="text" value={name} disabled={readOnly} onChange={(e) => setName(e.target.value)} placeholder="e.g., Revenue"
+          className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50" />
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Type</label>
-          <select value={type} onChange={(e) => { setType(e.target.value as TargetType); setShowThreshold(false); setMinStr("0"); setMaxStr("0"); }}
-            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary">
+          <select value={type} disabled={readOnly} onChange={(e) => { setType(e.target.value as TargetType); setShowThreshold(false); setMinStr("0"); setMaxStr("0"); }}
+            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50">
             <option value="bigger">Bigger is Better</option><option value="smaller">Smaller is Better</option>
           </select>
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Unit</label>
-          <select value={unit} onChange={(e) => setUnit(e.target.value as UnitType)}
-            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary">
+          <select value={unit} disabled={readOnly} onChange={(e) => setUnit(e.target.value as UnitType)}
+            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50">
             <option value="units">Units</option><option value="dollars">Dollars ($)</option><option value="percentage">Percentage (%)</option>
           </select>
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Weight (%)</label>
-          <input type="text" value={weightStr} onChange={(e) => setWeightStr(e.target.value)}
-            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary" />
+          <input type="text" value={weightStr} disabled={readOnly} onChange={(e) => setWeightStr(e.target.value)}
+            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50" />
         </div>
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Frequency</label>
-          <select value={frequency} onChange={(e) => setFrequency(e.target.value as Frequency)}
-            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary">
+          <select value={frequency} disabled={readOnly} onChange={(e) => setFrequency(e.target.value as Frequency)}
+            className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50">
             <option value="quarterly">Quarterly</option><option value="monthly">Monthly</option>
           </select>
         </div>
@@ -1114,14 +1131,14 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
               <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Target</label>
               <div className="relative mt-1">
                 {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                <input type="text" value={targetStr} onChange={(e) => setTargetStr(stripCommas(e.target.value))}
-                  className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
+                <input type="text" value={targetStr} disabled={readOnly} onChange={(e) => setTargetStr(stripCommas(e.target.value))}
+                  className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                 {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
               </div>
             </div>
           </div>
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={showThreshold} onChange={(e) => setShowThreshold(e.target.checked)} className="h-4 w-4 accent-primary" />
+            <input type="checkbox" checked={showThreshold} disabled={readOnly} onChange={(e) => setShowThreshold(e.target.checked)} className="h-4 w-4 accent-primary disabled:opacity-50" />
             <span className="text-xs text-primary/60">{isBigger ? "Set minimum threshold" : "Set maximum threshold"}</span>
           </label>
           {showThreshold && (
@@ -1130,8 +1147,8 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
                 <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Minimum</label>
                 <div className="relative mt-1">
                   {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                  <input type="text" value={minStr} onChange={(e) => setMinStr(stripCommas(e.target.value))}
-                    className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
+                  <input type="text" value={minStr} disabled={readOnly} onChange={(e) => setMinStr(stripCommas(e.target.value))}
+                    className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                   {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                 </div>
               </div>}
@@ -1139,8 +1156,8 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
                 <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Maximum</label>
                 <div className="relative mt-1">
                   {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                  <input type="text" value={maxStr} onChange={(e) => setMaxStr(stripCommas(e.target.value))}
-                    className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
+                  <input type="text" value={maxStr} disabled={readOnly} onChange={(e) => setMaxStr(stripCommas(e.target.value))}
+                    className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                   {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                 </div>
               </div>}
@@ -1152,7 +1169,7 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
       {isMonthly && (
         <div className="space-y-3">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={showThreshold} onChange={(e) => setShowThreshold(e.target.checked)} className="h-4 w-4 accent-primary" />
+            <input type="checkbox" checked={showThreshold} disabled={readOnly} onChange={(e) => setShowThreshold(e.target.checked)} className="h-4 w-4 accent-primary disabled:opacity-50" />
             <span className="text-xs text-primary/60">{isBigger ? "Set minimum thresholds per month" : "Set maximum thresholds per month"}</span>
           </label>
           {(["month1", "month2", "month3"] as const).map((m, i) => (
@@ -1163,8 +1180,8 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
                   <label className="text-[9px] font-semibold uppercase tracking-wider text-primary/30">Target</label>
                   <div className="relative mt-1">
                     {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                    <input type="text" value={mTargets[m]} onChange={(e) => setMTargets({ ...mTargets, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
-                      className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
+                    <input type="text" value={mTargets[m]} disabled={readOnly} onChange={(e) => setMTargets({ ...mTargets, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
+                      className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                     {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                   </div>
                 </div>
@@ -1173,8 +1190,8 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
                     <label className="text-[9px] font-semibold uppercase tracking-wider text-primary/30">Minimum</label>
                     <div className="relative mt-1">
                       {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                      <input type="text" value={mMin[m]} onChange={(e) => setMMin({ ...mMin, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
-                        className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
+                      <input type="text" value={mMin[m]} disabled={readOnly} onChange={(e) => setMMin({ ...mMin, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
+                        className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                       {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                     </div>
                   </div>
@@ -1184,8 +1201,8 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
                     <label className="text-[9px] font-semibold uppercase tracking-wider text-primary/30">Maximum</label>
                     <div className="relative mt-1">
                       {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                      <input type="text" value={mMax[m]} onChange={(e) => setMMax({ ...mMax, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
-                        className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
+                      <input type="text" value={mMax[m]} disabled={readOnly} onChange={(e) => setMMax({ ...mMax, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
+                        className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                       {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                     </div>
                   </div>
@@ -1196,10 +1213,12 @@ function TargetEditor({ target, onSave, saving }: { target: ProductivityTarget; 
         </div>
       )}
 
-      <button onClick={handleSave} disabled={saving}
-        className="rounded-[4px] bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-        {saving ? "Saving..." : "Save Target"}
-      </button>
+      {!readOnly && (
+        <button onClick={handleSave} disabled={saving}
+          className="rounded-[4px] bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+          {saving ? "Saving..." : "Save Target"}
+        </button>
+      )}
     </div>
   );
 }

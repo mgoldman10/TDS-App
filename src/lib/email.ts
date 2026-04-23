@@ -43,6 +43,36 @@ export async function sendWelcomeEmail(
   });
 }
 
+export async function sendEmailChangedEmail(
+  newEmail: string,
+  displayName: string,
+  loginUrl: string
+) {
+  await transporter.sendMail({
+    from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+    to: newEmail,
+    subject: "Your login email has been updated — Talent Density Systems",
+    html: `
+      <div style="font-family: 'Montserrat', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px; color: #212121;">
+        <h2 style="font-size: 20px; font-weight: 700; margin-bottom: 16px;">Hi ${displayName},</h2>
+        <p style="font-size: 14px; line-height: 1.6; color: #212121;">
+          Your login email address for Talent Density Systems has been updated to this address. Use this email to sign in going forward.
+        </p>
+        <div style="margin: 24px 0;">
+          <a href="${loginUrl}" style="display: inline-block; background: #212121; color: #ffffff; padding: 12px 24px; font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; text-decoration: none; border-radius: 4px;">
+            Log In
+          </a>
+        </div>
+        <p style="font-size: 12px; color: #C6C6C6; line-height: 1.5;">
+          If you didn't expect this change, please contact your administrator.
+        </p>
+        <hr style="border: none; border-top: 1px solid #C6C6C6; margin: 24px 0;" />
+        <p style="font-size: 12px; color: #C6C6C6;">— Mike Goldman</p>
+      </div>
+    `,
+  });
+}
+
 export async function sendPasswordResetEmail(
   toEmail: string,
   displayName: string,
