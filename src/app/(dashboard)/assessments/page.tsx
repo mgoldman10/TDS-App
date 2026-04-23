@@ -126,9 +126,20 @@ export default function AssessmentsPage() {
       setExistingAssessment(existing);
 
       if (existing) {
-        // Load existing scores
+        // Load existing scores, merging with current targets so new targets are editable
         setCultureFitScores(existing.cultureFitScores);
-        setProductivityActuals(existing.productivityActuals);
+        const merged = memberTargets.map((t) => {
+          const saved = existing.productivityActuals.find((pa) => pa.targetId === t.id);
+          return saved ?? {
+            targetId: t.id,
+            targetName: t.name,
+            actual: null,
+            monthlyActuals: t.frequency === "monthly"
+              ? { month1: null, month2: null, month3: null }
+              : null,
+          };
+        });
+        setProductivityActuals(merged);
       } else {
         // Initialize blank scores
         setCultureFitScores(

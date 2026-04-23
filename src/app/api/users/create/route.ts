@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { companyId, email, displayName, role, title, teamId } = body;
+    const { companyId, email, displayName, role, teamId } = body;
 
     if (!email || !displayName || !role) {
       return NextResponse.json(
@@ -82,27 +82,7 @@ export async function POST(request: NextRequest) {
         createdAt: new Date(),
       });
 
-      // Auto-create linked team member if team is specified
-      if (teamId) {
-        // Look up team leader for reportsToUserId
-        const teamSnap = await adminDb.doc(`companies/${companyId}/teams/${teamId}`).get();
-        const teamData = teamSnap.data();
-        const leaderId = teamData?.leaderId ?? "";
 
-        await adminDb.collection(`companies/${companyId}/teamMembers`).add({
-          name: displayName,
-          role: title || "",
-          teamId,
-          reportsToUserId: leaderId,
-          isAppUser: true,
-          appUserId: uid,
-          status: "active",
-          archivedAt: null,
-          archivedReason: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-      }
     }
 
     // Generate password reset link and send welcome email

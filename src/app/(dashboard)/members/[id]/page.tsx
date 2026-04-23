@@ -154,7 +154,18 @@ export default function MemberSummaryPage() {
       const tData = targetData ?? targets;
       if (existing) {
         setCultureFitScores(existing.cultureFitScores);
-        setProductivityActuals(existing.productivityActuals);
+        const merged = tData.map((t) => {
+          const saved = existing.productivityActuals.find((pa) => pa.targetId === t.id);
+          return saved ?? {
+            targetId: t.id,
+            targetName: t.name,
+            actual: null,
+            monthlyActuals: t.frequency === "monthly"
+              ? { month1: null, month2: null, month3: null }
+              : null,
+          };
+        });
+        setProductivityActuals(merged);
       } else {
         setCultureFitScores(cvData.map((cv) => ({ coreValueId: cv.id, coreValueName: cv.name, rating: "" as CultureFitRating })));
         setProductivityActuals(tData.map((t) => ({ targetId: t.id, targetName: t.name, actual: null, monthlyActuals: t.frequency === "monthly" ? { month1: null, month2: null, month3: null } : null })));
