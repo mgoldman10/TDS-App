@@ -36,11 +36,11 @@ const sections: HelpSection[] = [
           This system implements a five-step framework for building and maintaining high talent density:
         </p>
         <ol className="list-decimal pl-5 space-y-2">
-          <li><strong>Define</strong> — Set clear expectations. Define core values (culture fit) and productivity targets (job scorecard) for every role.</li>
-          <li><strong>Assess</strong> — Evaluate each team member quarterly on both culture fit and productivity. This produces their performance category.</li>
-          <li><strong>Act</strong> — Take differentiated actions based on category. Overinvest in high performers, coach medium performers, and make tough, timely decisions on low performers.</li>
-          <li><strong>Review</strong> — Track TDI (Talent Density Index) over time. Use reports to see trends, compare teams, and set benchmarks.</li>
-          <li><strong>Repeat</strong> — Do this every quarter. Consistency is what transforms a team.</li>
+          <li><strong>Set Expectations</strong> — Define what &quot;great&quot; looks like for every role. Use the Talent Density Expectations Model to document core values (culture fit behaviors) and productivity targets (KPIs with weights) before assessing anyone.</li>
+          <li><strong>Assess Performance</strong> — Evaluate each team member quarterly using the Talent Assessment Model. Score culture fit (0–10) and productivity (0–10) to assign an HP, MP, LP, or LCF performance category.</li>
+          <li><strong>Act</strong> — Take differentiated action by category. Overinvest in high performers, develop medium performers with clear coaching plans, and make timely decisions on low performers — either coach them up or move them out.</li>
+          <li><strong>Drive Accountability</strong> — Hold leaders accountable for growing their team&apos;s strength of talent. Use the Quarterly Talent Assessment Meeting (QTAM) and the Talent Density Indicator (TDI) to track progress and set improvement targets.</li>
+          <li><strong>Cascade</strong> — Roll the process out top-down, one level at a time. Each leader must be living the framework before cascading it to their direct reports. Consistency at every level is what builds a high-talent-density organization.</li>
         </ol>
         <div className="mt-3 rounded-[4px] bg-primary/5 p-3">
           <p className="font-semibold text-primary">Performance Categories</p>
