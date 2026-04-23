@@ -123,6 +123,7 @@ const sections: HelpSection[] = [
             <ul className="list-disc pl-5 space-y-1">
               <li><strong>Role selector</strong> — Change between Leader, Senior Leader, and Company Admin</li>
               <li><strong>Reset Password</strong> — Send a password reset email</li>
+              <li><strong>Email</strong> — View and edit the user&apos;s login email address inline. The system blocks duplicate emails and sends the user a notification at their new address when changed.</li>
               <li><strong>Deactivate / Reactivate</strong> — Suspend access without deleting the user or their data</li>
             </ul>
           </div>
@@ -138,10 +139,11 @@ const sections: HelpSection[] = [
           <div>
             <p className="font-semibold text-primary/80">Other Member Actions</p>
             <ul className="list-disc pl-5 space-y-1">
-              <li><strong>Archive vs Delete</strong> — Archive members when they leave. Archived members preserve their assessment history for accurate historical TDI reporting</li>
+              <li><strong>Archive</strong> — Use when a member leaves. Preserves their full assessment history for accurate historical TDI reporting. If a member was entered in error and has no assessments yet, a <strong>Delete</strong> option also appears to permanently remove them.</li>
+              <li><strong>Unarchive</strong> — Restore an archived member to active status. The Unarchive button appears on archived member cards when Show Archived is enabled.</li>
+              <li><strong>Show Archived</strong> — Toggle on the Teams &amp; Users page to see archived members alongside active ones. Also available on the Team Member Details list page, where archived members are sorted to the bottom and shown with an Archived badge.</li>
               <li><strong>Change Team</strong> — Move a member to a different team; the change is logged with a date for reporting context</li>
               <li><strong>Promote to Leader</strong> — Promote a member to lead their team; logs a leader change event on all team members</li>
-              <li><strong>Show Archived</strong> — Toggle to see archived members (grayed out) alongside active ones</li>
             </ul>
           </div>
 
@@ -167,6 +169,7 @@ const sections: HelpSection[] = [
       <>
         <p className="font-semibold text-primary">Where coaching meets data</p>
         <p>The member detail page has three tabs:</p>
+        <p className="mt-1 text-primary/70">Archived members are hidden from the list by default — check <strong>Show Archived</strong> to include them (they appear at the bottom, dimmed). When viewing an archived member&apos;s detail page, all three tabs are visible for historical reference but no data can be added or changed.</p>
         <div className="mt-2 space-y-3">
           <div>
             <p className="font-semibold text-primary/80">Overview Tab</p>
@@ -186,6 +189,7 @@ const sections: HelpSection[] = [
               <li>Enter productivity actuals against targets (monthly or quarterly)</li>
               <li>Category is calculated automatically from the scores</li>
               <li>Quarter incomplete option — assess with only 1 or 2 months of data</li>
+              <li>Productivity target weights must sum to exactly 100% before an assessment can be saved</li>
             </ul>
           </div>
           <div>
@@ -355,10 +359,10 @@ const sections: HelpSection[] = [
         <div className="mt-3 rounded-[4px] border border-yellow-300 bg-yellow-50 p-3">
           <p className="font-semibold text-yellow-800">Common Setup Mistakes</p>
           <ul className="mt-1 list-disc pl-5 space-y-1 text-yellow-800">
-            <li>Productivity target weights that don&apos;t add up to 100% — the assessment will still work but scores won&apos;t be accurate</li>
+            <li>Productivity target weights that don&apos;t add up to 100% — the Save button is blocked until weights total exactly 100%</li>
             <li>Forgetting to set the fiscal year start month — defaults to January, which may misalign your quarters</li>
             <li>Not entering all core value ratings during assessment — all must be rated for the category to calculate</li>
-            <li>Deleting team members instead of archiving — you lose their assessment history for TDI reporting</li>
+            <li>Permanently deleting members who have assessment history — use Archive instead to preserve their TDI reporting data. Permanent delete is only offered for members with no assessments.</li>
           </ul>
         </div>
       </>
