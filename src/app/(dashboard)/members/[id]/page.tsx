@@ -873,10 +873,10 @@ export default function MemberSummaryPage() {
             {(peopleCoach || difficultCoach) && (
               <div className="mt-4 flex flex-wrap gap-3">
                 {peopleCoach && (
-                  <AskMikeButton label="AskMike People Coach" onClick={() => { setActiveCoach(peopleCoach); setActiveCoachIsPeople(true); setShowChat(true); }} />
+                  <AskMikeButton label="People Coach" onClick={() => { setActiveCoach(peopleCoach); setActiveCoachIsPeople(true); setShowChat(true); }} />
                 )}
                 {difficultCoach && (
-                  <AskMikeButton label="AskMike Difficult Conversations Coach" onClick={() => { setActiveCoach(difficultCoach); setActiveCoachIsPeople(false); setShowChat(true); }} />
+                  <AskMikeButton label="Difficult Conversations Coach" onClick={() => { setActiveCoach(difficultCoach); setActiveCoachIsPeople(false); setShowChat(true); }} />
                 )}
               </div>
             )}

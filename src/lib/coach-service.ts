@@ -148,6 +148,7 @@ export async function saveTranscript(
     memberId: string | null;
     memberName: string | null;
     messages: ChatMessage[];
+    title?: string;
   }
 ): Promise<string> {
   if (transcriptId) {
@@ -165,6 +166,16 @@ export async function saveTranscript(
   return ref.id;
 }
 
+export async function updateTranscriptTitle(
+  transcriptId: string,
+  title: string
+): Promise<void> {
+  await updateDoc(doc(db, "config", "askmike", "transcripts", transcriptId), {
+    title,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function getUserTranscripts(
   userId: string,
   coachId: string
@@ -173,6 +184,23 @@ export async function getUserTranscripts(
     transcriptsRef(),
     where("userId", "==", userId),
     where("coachId", "==", coachId),
+    orderBy("createdAt", "desc"),
+    limit(20)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Transcript));
+}
+
+export async function getUserTranscriptsForMember(
+  userId: string,
+  coachId: string,
+  memberId: string
+): Promise<Transcript[]> {
+  const q = query(
+    transcriptsRef(),
+    where("userId", "==", userId),
+    where("coachId", "==", coachId),
+    where("memberId", "==", memberId),
     orderBy("createdAt", "desc"),
     limit(20)
   );

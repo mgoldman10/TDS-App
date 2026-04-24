@@ -35,6 +35,7 @@ export interface Transcript {
   userDisplayName: string;
   memberId: string | null;
   memberName: string | null;
+  title?: string;
   messages: ChatMessage[];
   createdAt: Timestamp;
   updatedAt: Timestamp;
