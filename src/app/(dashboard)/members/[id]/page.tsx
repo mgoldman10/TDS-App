@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
+import { Timestamp } from "firebase/firestore";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -11,7 +12,7 @@ import { getAllTeamMembers, getTeams, getMemberChanges } from "@/lib/team-servic
 import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { getAssessmentHistory, getAssessmentForMember, createAssessment, updateAssessment } from "@/lib/assessment-service";
 import { getTargetsForMember, createTarget, updateTarget, deleteTarget } from "@/lib/productivity-service";
-import { getActionPlanForMember, createActionPlan, addAction, updateActions, addNote } from "@/lib/actionplan-service";
+import { getActionPlanForMember, createActionPlan, addAction, updateActions, addNote, updateNotes } from "@/lib/actionplan-service";
 import { ensureDefaultCoaches } from "@/lib/coach-service";
 import AskMikeButton from "@/components/askmike/AskMikeButton";
 import ChatPanel from "@/components/askmike/ChatPanel";
@@ -79,6 +80,11 @@ export default function MemberSummaryPage() {
   const [newActionDesc, setNewActionDesc] = useState("");
   const [newActionOwner, setNewActionOwner] = useState("");
   const [newActionDate, setNewActionDate] = useState("");
+  const [editingActionIdx, setEditingActionIdx] = useState<number | null>(null);
+  const [editingActionDesc, setEditingActionDesc] = useState("");
+  const [editingActionDate, setEditingActionDate] = useState("");
+  const [editingNoteIdx, setEditingNoteIdx] = useState<number | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState("");
 
   // AskMike coach state
   const [peopleCoach, setPeopleCoach] = useState<Coach | null>(null);
@@ -274,10 +280,73 @@ export default function MemberSummaryPage() {
   }
 
   async function handleAddNote() {
-    if (!companyId || !newNoteText.trim() || !memberPlan) return;
-    await addNote(companyId, memberPlan.id, memberPlan.notes, newNoteText.trim());
-    setMemberPlan({ ...memberPlan, notes: [...memberPlan.notes, { text: newNoteText.trim(), createdAt: { toDate: () => new Date() } }] } as ActionPlan);
+    if (!companyId || !newNoteText.trim()) return;
+    let plan = memberPlan;
+    if (!plan) {
+      const id = await createActionPlan(companyId, { memberId, memberName: member?.name ?? "" });
+      plan = { id, memberId, memberName: member?.name ?? "", actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
+    }
+    const text = newNoteText.trim();
+    await addNote(companyId, plan.id, plan.notes, text);
+    setMemberPlan({ ...plan, notes: [...plan.notes, { text, createdAt: Timestamp.now() }] });
     setNewNoteText("");
+  }
+
+  function startEditNote(idx: number) {
+    if (!memberPlan) return;
+    setEditingNoteIdx(idx);
+    setEditingNoteText(memberPlan.notes[idx]?.text ?? "");
+  }
+
+  function cancelEditNote() {
+    setEditingNoteIdx(null);
+    setEditingNoteText("");
+  }
+
+  async function handleSaveNote(idx: number) {
+    if (!companyId || !memberPlan) return;
+    const text = editingNoteText.trim();
+    if (!text) return;
+    const updated = [...memberPlan.notes];
+    updated[idx] = { ...updated[idx], text };
+    await updateNotes(companyId, memberPlan.id, updated);
+    setMemberPlan({ ...memberPlan, notes: updated });
+    cancelEditNote();
+  }
+
+  async function handleDeleteNote(idx: number) {
+    if (!companyId || !memberPlan) return;
+    if (!window.confirm("Delete this coaching note? This cannot be undone.")) return;
+    const updated = memberPlan.notes.filter((_, i) => i !== idx);
+    await updateNotes(companyId, memberPlan.id, updated);
+    setMemberPlan({ ...memberPlan, notes: updated });
+    if (editingNoteIdx === idx) cancelEditNote();
+  }
+
+  function startEditAction(idx: number) {
+    if (!memberPlan) return;
+    const a = memberPlan.actions[idx];
+    if (!a) return;
+    setEditingActionIdx(idx);
+    setEditingActionDesc(a.description);
+    setEditingActionDate(a.targetDate ?? "");
+  }
+
+  function cancelEditAction() {
+    setEditingActionIdx(null);
+    setEditingActionDesc("");
+    setEditingActionDate("");
+  }
+
+  async function handleSaveAction(idx: number) {
+    if (!companyId || !memberPlan) return;
+    const description = editingActionDesc.trim();
+    if (!description) return;
+    const updated = [...memberPlan.actions];
+    updated[idx] = { ...updated[idx], description, targetDate: editingActionDate };
+    await updateActions(companyId, memberPlan.id, updated);
+    setMemberPlan({ ...memberPlan, actions: updated });
+    cancelEditAction();
   }
 
   function buildCoachContext(): string {
@@ -687,6 +756,22 @@ export default function MemberSummaryPage() {
               )}
               {openActions.map((a: ActionItem, i: number) => {
                 const actionIdx = memberPlan?.actions.indexOf(a) ?? -1;
+                const isEditing = editingActionIdx === actionIdx && actionIdx >= 0;
+                if (isEditing) {
+                  return (
+                    <div key={i} className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 rounded-[4px] border border-primary/40 p-2.5">
+                      <input type="text" value={editingActionDesc} onChange={(e) => setEditingActionDesc(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleSaveAction(actionIdx); if (e.key === "Escape") cancelEditAction(); }}
+                        className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" autoFocus />
+                      <input type="date" value={editingActionDate} onChange={(e) => setEditingActionDate(e.target.value)}
+                        className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                      <div className="flex gap-2">
+                        <button onClick={() => handleSaveAction(actionIdx)} disabled={!editingActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Save</button>
+                        <button onClick={cancelEditAction} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs font-semibold uppercase text-primary/60 transition hover:text-primary">Cancel</button>
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                   <div key={i} className="mt-2 flex items-center gap-3 rounded-[4px] border border-brand-gray/50 p-2.5">
                     <input type="checkbox" checked={false} disabled={isArchived} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
@@ -702,6 +787,7 @@ export default function MemberSummaryPage() {
                       {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
                     </select>
                     {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
+                    {!isArchived && <button onClick={() => { if (actionIdx >= 0) startEditAction(actionIdx); }} className="text-xs text-primary/30 transition hover:text-primary" title="Edit action">✎</button>}
                     {!isArchived && <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
                   </div>
                 );
@@ -743,9 +829,35 @@ export default function MemberSummaryPage() {
               {memberPlan && memberPlan.notes.length > 0 && (
                 <div className="mt-4 border-t border-brand-gray pt-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/30">Coaching Notes</p>
-                  {[...memberPlan.notes].reverse().map((n, i) => (
-                    <div key={i} className="mt-1 text-sm text-primary/70"><span className="text-[10px] text-primary/30">{n.createdAt?.toDate ? n.createdAt.toDate().toLocaleDateString() : ""} — </span>{n.text}</div>
-                  ))}
+                  {memberPlan.notes.map((_, displayIdx) => {
+                    const noteIdx = memberPlan.notes.length - 1 - displayIdx;
+                    const n = memberPlan.notes[noteIdx];
+                    const dateLabel = n.createdAt?.toDate ? n.createdAt.toDate().toLocaleDateString() : "";
+                    if (editingNoteIdx === noteIdx) {
+                      return (
+                        <div key={noteIdx} className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                          <input type="text" value={editingNoteText} onChange={(e) => setEditingNoteText(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleSaveNote(noteIdx); if (e.key === "Escape") cancelEditNote(); }}
+                            className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" autoFocus />
+                          <div className="flex gap-2">
+                            <button onClick={() => handleSaveNote(noteIdx)} disabled={!editingNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Save</button>
+                            <button onClick={cancelEditNote} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs font-semibold uppercase text-primary/60 transition hover:text-primary">Cancel</button>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={noteIdx} className="group mt-1 flex items-start gap-2 text-sm text-primary/70">
+                        <span className="flex-1"><span className="text-[10px] text-primary/30">{dateLabel} — </span>{n.text}</span>
+                        {!isArchived && (
+                          <>
+                            <button onClick={() => startEditNote(noteIdx)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit note">✎</button>
+                            <button onClick={() => handleDeleteNote(noteIdx)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete note">✕</button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {!isArchived && (

@@ -97,3 +97,14 @@ export async function addNote(
     updatedAt: serverTimestamp(),
   });
 }
+
+export async function updateNotes(
+  companyId: string,
+  planId: string,
+  notes: ActionNote[]
+): Promise<void> {
+  await updateDoc(doc(db, "companies", companyId, "actionPlans", planId), {
+    notes,
+    updatedAt: serverTimestamp(),
+  });
+}
