@@ -22,6 +22,7 @@ import {
   promoteToLeader,
   logLeaderChangeForTeamMembers,
   findDuplicateMember,
+  propagateMemberNameChange,
 } from "@/lib/team-service";
 import { getAssessmentHistory } from "@/lib/assessment-service";
 import { getCompanyUsers, updateUserRole, deactivateUser, reactivateUser, updateUserEmail } from "@/lib/user-service";
@@ -225,13 +226,13 @@ export default function TeamsPage() {
       .map((t) => ({ name: t.leaderName, title: t.leaderTitle || "", subTeamName: t.name }));
   }
 
-  async function checkDuplicates(name: string, email: string) {
-    if (!companyId || (!name.trim() && !email.trim())) { setDupWarning(""); return; }
+  async function checkDuplicates(_name: string, email: string) {
+    if (!companyId || !email.trim()) { setDupWarning(""); return; }
     try {
-      const matches = await findDuplicateMember(companyId, name, email);
+      const matches = await findDuplicateMember(companyId, "", email);
       if (matches.length > 0) {
         const names = matches.map((m) => m.name).join(", ");
-        setDupWarning(`Possible duplicate: ${names} already exists. You can still proceed.`);
+        setDupWarning(`This email is already used by ${names}. Duplicate emails are not allowed.`);
       } else {
         setDupWarning("");
       }
@@ -333,6 +334,22 @@ export default function TeamsPage() {
 
   async function handleAddMember(teamId: string) {
     if (!companyId || !newMemberName.trim()) return;
+
+    // Block on duplicate email — re-check synchronously since the inline
+    // warning is debounced on blur and the email may have changed since.
+    if (newMemberEmail.trim()) {
+      try {
+        const emailDups = await findDuplicateMember(companyId, "", newMemberEmail.trim());
+        if (emailDups.length > 0) {
+          const names = emailDups.map((m) => m.name).join(", ");
+          setDupWarning(`This email is already used by ${names}. Duplicate emails are not allowed.`);
+          return;
+        }
+      } catch {
+        // If the duplicate check itself fails, fall through and let the create flow surface any error.
+      }
+    }
+
     setAddingMember(true);
     try {
       const team = teams.find((t) => t.id === teamId);
@@ -545,7 +562,8 @@ export default function TeamsPage() {
     if (!member) return;
     try {
       const updates: Partial<{ name: string; role: string }> = {};
-      if (editName !== member.name) updates.name = editName;
+      const nameChanged = editName !== member.name;
+      if (nameChanged) updates.name = editName;
       if (editTitle !== member.role) {
         if (member.role && editTitle !== member.role) {
           await logMemberChange(companyId, memberId, "role", member.role, editTitle, profile?.uid || "", todayISO, currentFY, currentFQ);
@@ -561,6 +579,32 @@ export default function TeamsPage() {
           ),
         });
       }
+
+      // If the name changed, propagate to denormalized copies
+      // (user.displayName, team.leaderName, actionPlan.memberName)
+      if (nameChanged) {
+        const oldName = member.name;
+        const newName = editName;
+        const appUserId = member.appUserId ?? null;
+        const { updatedTeamIds } = await propagateMemberNameChange(
+          companyId, memberId, oldName, newName, appUserId
+        );
+        if (updatedTeamIds.length > 0) {
+          setTeams((prev) =>
+            prev.map((t) =>
+              updatedTeamIds.includes(t.id) ? { ...t, leaderName: newName } : t
+            )
+          );
+        }
+        if (appUserId) {
+          setUsers((prev) =>
+            prev.map((u) =>
+              u.uid === appUserId ? { ...u, displayName: newName } : u
+            )
+          );
+        }
+      }
+
       setEditingMemberId(null);
     } catch {
       setError("Failed to update member.");
@@ -1067,7 +1111,7 @@ export default function TeamsPage() {
                     placeholder="Email (optional — required to invite as user)"
                     className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                   {dupWarning && (
-                    <p className="text-[11px] text-yellow-700 bg-yellow-50 rounded-[4px] px-2 py-1">{dupWarning}</p>
+                    <p className="text-[11px] text-accent bg-accent/10 rounded-[4px] px-2 py-1">{dupWarning}</p>
                   )}
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={newMemberInvite}

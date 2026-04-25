@@ -10,6 +10,7 @@ import {
   orderBy,
   serverTimestamp,
   arrayUnion,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { Team, TeamMember, TeamMemberChange, MemberChangeType, TeamLeaderChange } from "@/types/team";
@@ -143,6 +144,68 @@ export async function deleteTeamMember(
   memberId: string
 ): Promise<void> {
   await deleteDoc(doc(db, "companies", companyId, "teamMembers", memberId));
+}
+
+/**
+ * Propagate a member name change to denormalized copies elsewhere:
+ * - linked user's displayName (if member is an app user)
+ * - leaderName on any team this person leads (matched by appUserId or by old leaderName free-text)
+ * - memberName on any actionPlan for this member
+ *
+ * Caller is responsible for updating the teamMember doc itself (e.g. via updateTeamMember).
+ */
+export async function propagateMemberNameChange(
+  companyId: string,
+  memberId: string,
+  oldName: string,
+  newName: string,
+  appUserId: string | null
+): Promise<{ updatedTeamIds: string[] }> {
+  const batch = writeBatch(db);
+  const updatedTeamIds: string[] = [];
+
+  if (appUserId) {
+    batch.update(doc(db, "companies", companyId, "users", appUserId), {
+      displayName: newName,
+    });
+  }
+
+  // Teams led by this user (linked via appUserId)
+  if (appUserId) {
+    const byId = await getDocs(
+      query(teamsRef(companyId), where("leaderId", "==", appUserId))
+    );
+    for (const t of byId.docs) {
+      batch.update(t.ref, { leaderName: newName });
+      updatedTeamIds.push(t.id);
+    }
+  }
+
+  // Teams whose leaderName matches the old name as free-text (no leaderId or different uid)
+  if (oldName) {
+    const byName = await getDocs(
+      query(teamsRef(companyId), where("leaderName", "==", oldName))
+    );
+    for (const t of byName.docs) {
+      if (updatedTeamIds.includes(t.id)) continue;
+      batch.update(t.ref, { leaderName: newName });
+      updatedTeamIds.push(t.id);
+    }
+  }
+
+  // Action plans for this member
+  const plans = await getDocs(
+    query(
+      collection(db, "companies", companyId, "actionPlans"),
+      where("memberId", "==", memberId)
+    )
+  );
+  for (const p of plans.docs) {
+    batch.update(p.ref, { memberName: newName });
+  }
+
+  await batch.commit();
+  return { updatedTeamIds };
 }
 
 // --- Change History ---
