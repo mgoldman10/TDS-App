@@ -179,7 +179,7 @@ export default function CoreValuesPage() {
             >
               <div className="flex items-center gap-3 p-4">
                 <button
-                  onClick={() => canEdit && expandCard(cv)}
+                  onClick={() => expandCard(cv)}
                   className="flex-1 text-left"
                 >
                   <span className="font-semibold text-primary">
@@ -194,18 +194,41 @@ export default function CoreValuesPage() {
                 <span className="text-[10px] text-primary/30">
                   {cv.behaviors.length} behavior{cv.behaviors.length !== 1 ? "s" : ""}
                 </span>
-                {canEdit && (
-                  <button
-                    onClick={() => expandCard(cv)}
-                    className="px-1 text-sm text-primary/50"
-                  >
-                    {expandedId === cv.id ? "▲" : "▼"}
-                  </button>
-                )}
+                <button
+                  onClick={() => expandCard(cv)}
+                  className="px-1 text-sm text-primary/50"
+                >
+                  {expandedId === cv.id ? "▲" : "▼"}
+                </button>
               </div>
 
-              {/* Expanded edit form */}
-              {expandedId === cv.id && editing && (
+              {/* Expanded read-only view (non-admins) */}
+              {expandedId === cv.id && !canEdit && (
+                <div className="border-t border-brand-gray px-4 pb-4 pt-3 space-y-3">
+                  {cv.description && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-primary/40">Description</p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-primary">{cv.description}</p>
+                    </div>
+                  )}
+                  {cv.behaviors.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wider text-primary/40">Behaviors</p>
+                      <ul className="mt-1 list-inside list-disc space-y-0.5 text-sm text-primary">
+                        {cv.behaviors.map((b, i) => (
+                          <li key={i}>{b}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {!cv.description && cv.behaviors.length === 0 && (
+                    <p className="text-sm text-primary/40">No additional details.</p>
+                  )}
+                </div>
+              )}
+
+              {/* Expanded edit form (admins) */}
+              {expandedId === cv.id && canEdit && editing && (
                 <div className="border-t border-brand-gray px-4 pb-4 pt-3 space-y-4">
                   <div>
                     <label className="block text-xs font-semibold uppercase tracking-wider text-primary/40">

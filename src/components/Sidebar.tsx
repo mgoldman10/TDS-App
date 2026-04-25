@@ -39,7 +39,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Setup",
     items: [
-      { label: "Core Values", href: "/core-values", minRole: "company_admin", companyScoped: true },
+      { label: "Core Values", href: "/core-values", companyScoped: true },
       { label: "Company Settings", href: "/settings/company", minRole: "company_admin", companyScoped: true },
       { label: "Teams & Users", href: "/teams", minRole: "company_admin", companyScoped: true },
     ],

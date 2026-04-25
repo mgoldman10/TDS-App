@@ -1149,7 +1149,7 @@ export default function TeamsPage() {
                     className="text-xs font-semibold text-accent transition hover:opacity-70">
                     + Add Member
                   </button>
-                  {isAdmin && (
+                  {canManage && (
                     <button onClick={() => { setAddSubTeamParentId(team.id); setNewSubTeamName(""); setNewSubTeamLeader(""); setNewSubTeamLeaderTitle(""); }}
                       className="text-xs font-semibold text-primary/50 transition hover:text-primary">
                       + Add Sub-Team
