@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
-import { formatNumber, stripCommas } from "@/lib/formatNumber";
+import { formatNumber } from "@/lib/formatNumber";
+import NumericInput from "@/components/NumericInput";
 import { useCompany } from "@/contexts/CompanyContext";
 import { getCoreValues } from "@/lib/corevalue-service";
 import { getAuthorizedMemberIds } from "@/lib/team-auth";
@@ -476,13 +477,9 @@ export default function AssessmentsPage() {
                             <label className="text-[9px] font-semibold uppercase tracking-wider text-primary/30">Actual</label>
                             <div className="relative mt-1">
                               {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                              <input
-                                type="text"
-                                value={pa?.actual === null ? "" : formatNumber(pa?.actual ?? 0)}
-                                onChange={(e) => {
-                                  const raw = stripCommas(e.target.value);
-                                  updateProductivityActual(t.id, raw === "" ? null : parseFloat(raw) || 0);
-                                }}
+                              <NumericInput
+                                value={pa?.actual ?? null}
+                                onChange={(v) => updateProductivityActual(t.id, v)}
                                 placeholder="Enter actual"
                                 className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`}
                               />
@@ -506,13 +503,9 @@ export default function AssessmentsPage() {
                                   </span>
                                   <div className="relative flex-1">
                                     {prefix && <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-primary/40">{prefix}</span>}
-                                    <input
-                                      type="text"
-                                      value={mVal === null ? "" : formatNumber(mVal ?? 0)}
-                                      onChange={(e) => {
-                                        const raw = stripCommas(e.target.value);
-                                        updateMonthlyActual(t.id, m, raw === "" ? null : parseFloat(raw) || 0);
-                                      }}
+                                    <NumericInput
+                                      value={mVal ?? null}
+                                      onChange={(v) => updateMonthlyActual(t.id, m, v)}
                                       placeholder="Enter actual"
                                       className={`w-full rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-xs text-primary outline-none focus:border-primary ${prefix ? "pl-5" : ""} ${suffix ? "pr-5" : ""}`}
                                     />

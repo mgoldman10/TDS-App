@@ -18,6 +18,18 @@ function plansRef(companyId: string) {
   return collection(db, "companies", companyId, "actionPlans");
 }
 
+function backfillIds(plan: ActionPlan): ActionPlan {
+  const actions = (plan.actions ?? []).map((a) =>
+    a.id ? a : { ...a, id: crypto.randomUUID() }
+  );
+  const notes = (plan.notes ?? []).map((n) =>
+    n.id
+      ? { ...n, actionItemId: n.actionItemId ?? null }
+      : { ...n, id: crypto.randomUUID(), actionItemId: n.actionItemId ?? null }
+  );
+  return { ...plan, actions, notes };
+}
+
 /** Get the single ongoing action plan for a member (creates none — call createActionPlan if needed) */
 export async function getActionPlanForMember(
   companyId: string,
@@ -31,7 +43,7 @@ export async function getActionPlanForMember(
   );
   const snap = await getDocs(q);
   if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...snap.docs[0].data() } as ActionPlan;
+  return backfillIds({ id: snap.docs[0].id, ...snap.docs[0].data() } as ActionPlan);
 }
 
 /** Get all action plans for a company (across all members) */
@@ -43,7 +55,7 @@ export async function getAllActionPlans(
     orderBy("memberName", "asc")
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ActionPlan));
+  return snap.docs.map((d) => backfillIds({ id: d.id, ...d.data() } as ActionPlan));
 }
 
 export async function createActionPlan(
@@ -90,10 +102,17 @@ export async function addNote(
   companyId: string,
   planId: string,
   currentNotes: ActionNote[],
-  text: string
+  text: string,
+  actionItemId: string | null = null
 ): Promise<void> {
+  const newNote: ActionNote = {
+    id: crypto.randomUUID(),
+    actionItemId,
+    text,
+    createdAt: Timestamp.now(),
+  };
   await updateDoc(doc(db, "companies", companyId, "actionPlans", planId), {
-    notes: [...currentNotes, { text, createdAt: Timestamp.now() }],
+    notes: [...currentNotes, newNote],
     updatedAt: serverTimestamp(),
   });
 }

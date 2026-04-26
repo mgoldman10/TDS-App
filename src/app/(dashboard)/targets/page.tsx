@@ -17,6 +17,7 @@ import type { TeamMember } from "@/types/team";
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues } from "@/types/productivity";
 import { DEFAULT_MONTHLY } from "@/types/productivity";
 import { formatNumber, stripCommas } from "@/lib/formatNumber";
+import NumericInput from "@/components/NumericInput";
 
 export default function ProductivityTargetsPage() {
   const { profile } = useAuth();
@@ -303,27 +304,22 @@ function UnitInput({
   disabled,
   placeholder,
 }: {
-  value: string | number;
-  onChange?: (val: string) => void;
+  value: number | null;
+  onChange?: (val: number | null) => void;
   unit: UnitType;
   disabled?: boolean;
   placeholder?: string;
 }) {
   const prefix = unit === "dollars" ? "$" : "";
   const suffix = unit === "percentage" ? "%" : "";
-  // Display formatted, edit raw
-  const displayValue = disabled
-    ? formatNumber(value)
-    : typeof value === "number" ? formatNumber(value) : value;
   return (
     <div className="relative mt-1">
       {prefix && (
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>
       )}
-      <input
-        type="text"
-        value={displayValue}
-        onChange={onChange ? (e) => onChange(stripCommas(e.target.value)) : undefined}
+      <NumericInput
+        value={value}
+        onChange={onChange ?? (() => {})}
         disabled={disabled}
         placeholder={placeholder}
         className={`w-full rounded-[4px] border border-brand-gray px-3 py-2 text-sm outline-none focus:border-primary ${
@@ -365,9 +361,9 @@ function TargetCard({
   const [weightStr, setWeightStr] = useState(String(target.weight));
 
   // Quarterly values
-  const [targetStr, setTargetStr] = useState(String(target.target));
-  const [minStr, setMinStr] = useState(String(target.min));
-  const [maxStr, setMaxStr] = useState(String(target.max));
+  const [targetVal, setTargetVal] = useState<number | null>(target.target);
+  const [minVal, setMinVal] = useState<number | null>(target.min);
+  const [maxVal, setMaxVal] = useState<number | null>(target.max);
 
   // Threshold checkbox — show min (bigger) or max (smaller) only when checked
   const hasExistingThreshold = target.type === "bigger"
@@ -389,9 +385,9 @@ function TargetCard({
     setUnit(target.unit);
     setFrequency(target.frequency ?? "quarterly");
     setWeightStr(String(target.weight));
-    setTargetStr(String(target.target));
-    setMinStr(String(target.min));
-    setMaxStr(String(target.max));
+    setTargetVal(target.target);
+    setMinVal(target.min);
+    setMaxVal(target.max);
     setMTargets(target.monthlyTargets ?? { ...DEFAULT_MONTHLY });
     setMMin(target.monthlyMin ?? { ...DEFAULT_MONTHLY });
     setMMax(target.monthlyMax ?? { ...DEFAULT_MONTHLY });
@@ -399,9 +395,9 @@ function TargetCard({
 
   function handleSave() {
     const weight = parseFloat(weightStr) || 0;
-    const targetVal = parseFloat(targetStr) || 0;
-    const minVal = parseFloat(minStr) || 0;
-    const maxVal = parseFloat(maxStr) || 0;
+    const targetNum = targetVal ?? 0;
+    const minNum = minVal ?? 0;
+    const maxNum = maxVal ?? 0;
 
     if (frequency === "monthly") {
       const finalMMin = type === "bigger" && showThreshold ? mMin : { ...DEFAULT_MONTHLY };
@@ -416,9 +412,9 @@ function TargetCard({
     } else {
       onSave({
         name, type, unit, frequency, weight,
-        target: targetVal,
-        min: type === "bigger" && showThreshold ? minVal : 0,
-        max: type === "smaller" && showThreshold ? maxVal : 0,
+        target: targetNum,
+        min: type === "bigger" && showThreshold ? minNum : 0,
+        max: type === "smaller" && showThreshold ? maxNum : 0,
         monthlyTargets: null, monthlyMin: null, monthlyMax: null,
       });
     }
@@ -431,9 +427,9 @@ function TargetCard({
   function updateMonthly(
     setter: React.Dispatch<React.SetStateAction<MonthlyValues>>,
     month: "month1" | "month2" | "month3",
-    value: string
+    value: number | null
   ) {
-    setter((prev) => ({ ...prev, [month]: parseFloat(value) || 0 }));
+    setter((prev) => ({ ...prev, [month]: value ?? 0 }));
   }
 
   return (
@@ -482,8 +478,8 @@ function TargetCard({
               <select value={type} onChange={(e) => {
                 setType(e.target.value as TargetType);
                 setShowThreshold(false);
-                setMinStr("0");
-                setMaxStr("0");
+                setMinVal(0);
+                setMaxVal(0);
                 setMMin({ ...DEFAULT_MONTHLY });
                 setMMax({ ...DEFAULT_MONTHLY });
               }}
@@ -522,7 +518,7 @@ function TargetCard({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Target</label>
-                  <UnitInput value={targetStr} onChange={setTargetStr} unit={unit} />
+                  <UnitInput value={targetVal} onChange={setTargetVal} unit={unit} />
                 </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
@@ -541,14 +537,14 @@ function TargetCard({
                   {isBigger && (
                     <div>
                       <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Minimum</label>
-                      <UnitInput value={minStr} onChange={setMinStr} unit={unit} placeholder="0" />
+                      <UnitInput value={minVal} onChange={setMinVal} unit={unit} placeholder="0" />
                       <p className="mt-0.5 text-[9px] text-primary/30">Must be ≤ Target</p>
                     </div>
                   )}
                   {!isBigger && (
                     <div>
                       <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Maximum</label>
-                      <UnitInput value={maxStr} onChange={setMaxStr} unit={unit} placeholder="Required" />
+                      <UnitInput value={maxVal} onChange={setMaxVal} unit={unit} placeholder="Required" />
                     </div>
                   )}
                 </div>

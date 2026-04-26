@@ -14,6 +14,7 @@ import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { DEFAULT_SCORING_PARAMETERS } from "@/types/company";
 import TalentGrid from "@/components/TalentGrid";
 import type { Assessment, PerformanceCategory } from "@/types/assessment";
+import type { ActionPlan } from "@/types/actionplan";
 import { CATEGORY_COLORS } from "@/types/assessment";
 // actionplan types used implicitly via service return types
 
@@ -50,7 +51,7 @@ export default function DashboardPage() {
   const [currentAssessments, setCurrentAssessments] = useState<Assessment[]>([]);
   const [tdiTrend, setTdiTrend] = useState<TdiPoint[]>([]);
   const [actionItems, setActionItems] = useState<FlatAction[]>([]);
-  const [allPlans, setAllPlans] = useState<{ id: string; memberId: string; memberName: string; actions: { description: string; targetDate: string; completedAt: string | null; owner: string }[] }[]>([]);
+  const [allPlans, setAllPlans] = useState<ActionPlan[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

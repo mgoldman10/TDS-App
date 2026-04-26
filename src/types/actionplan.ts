@@ -1,6 +1,7 @@
 import { Timestamp } from "firebase/firestore";
 
 export interface ActionItem {
+  id: string;
   description: string;
   targetDate: string;       // ISO date string
   completedAt: string | null; // ISO date string or null if not done
@@ -8,6 +9,8 @@ export interface ActionItem {
 }
 
 export interface ActionNote {
+  id: string;
+  actionItemId: string | null; // null = general note, otherwise links to ActionItem.id
   text: string;
   createdAt: Timestamp;
 }

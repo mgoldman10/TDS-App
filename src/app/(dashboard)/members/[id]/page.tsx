@@ -23,13 +23,14 @@ import { calculateTotalProductivityScore } from "@/lib/productivity-scoring";
 import { validateWeights } from "@/lib/productivity-scoring";
 import { assignCategory } from "@/lib/category-scoring";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
-import { formatNumber, stripCommas } from "@/lib/formatNumber";
+import { formatNumber } from "@/lib/formatNumber";
+import NumericInput from "@/components/NumericInput";
 import UserAvatar from "@/components/UserAvatar";
 import type { TeamMember, Team, TeamMemberChange } from "@/types/team";
 import type { Assessment, CultureFitRating, CultureFitScore, ProductivityActual, PerformanceCategory } from "@/types/assessment";
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues, NullableMonthlyValues } from "@/types/productivity";
 import type { CoreValue } from "@/types/corevalue";
-import type { ActionPlan, ActionItem } from "@/types/actionplan";
+import type { ActionPlan, ActionItem, ActionNote } from "@/types/actionplan";
 import type { Coach } from "@/types/coach";
 import { CATEGORY_COLORS, CATEGORY_LABELS, RATING_LABELS } from "@/types/assessment";
 import { DEFAULT_MONTHLY } from "@/types/productivity";
@@ -80,11 +81,13 @@ export default function MemberSummaryPage() {
   const [newActionDesc, setNewActionDesc] = useState("");
   const [newActionOwner, setNewActionOwner] = useState("");
   const [newActionDate, setNewActionDate] = useState("");
-  const [editingActionIdx, setEditingActionIdx] = useState<number | null>(null);
+  const [editingActionId, setEditingActionId] = useState<string | null>(null);
   const [editingActionDesc, setEditingActionDesc] = useState("");
   const [editingActionDate, setEditingActionDate] = useState("");
-  const [editingNoteIdx, setEditingNoteIdx] = useState<number | null>(null);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingNoteText, setEditingNoteText] = useState("");
+  const [linkedNoteDraftFor, setLinkedNoteDraftFor] = useState<string | null>(null);
+  const [linkedNoteDraftText, setLinkedNoteDraftText] = useState("");
 
   // AskMike coach state
   const [peopleCoach, setPeopleCoach] = useState<Coach | null>(null);
@@ -206,6 +209,15 @@ export default function MemberSummaryPage() {
   const trendData = [...assessments].reverse().map((a) => ({ quarter: `Q${a.fiscalQuarter} FY${a.fiscalYear}`, cultureFit: a.cultureFitScore, productivity: a.productivityScore }));
   const openActions = (memberPlan?.actions ?? []).filter((a: ActionItem) => !a.completedAt).sort((a: ActionItem, b: ActionItem) => (a.targetDate || "9999") < (b.targetDate || "9999") ? -1 : 1);
   const completedActions = (memberPlan?.actions ?? []).filter((a: ActionItem) => a.completedAt);
+  const allNotes = memberPlan?.notes ?? [];
+  const generalNotes = allNotes.filter((n) => n.actionItemId == null);
+  const notesByActionId = new Map<string, ActionNote[]>();
+  for (const n of allNotes) {
+    if (n.actionItemId == null) continue;
+    const arr = notesByActionId.get(n.actionItemId) ?? [];
+    arr.push(n);
+    notesByActionId.set(n.actionItemId, arr);
+  }
   const { total: weightTotal, valid: weightsValid } = validateWeights(targets);
   const isArchived = member?.status === "archived";
 
@@ -249,101 +261,115 @@ export default function MemberSummaryPage() {
       plan = { id, memberId, memberName: member?.name ?? "", actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
       setMemberPlan(plan);
     }
-    const action: ActionItem = { description: newActionDesc.trim(), targetDate: newActionDate, completedAt: null, owner: newActionOwner || profile?.displayName || "" };
+    const action: ActionItem = { id: crypto.randomUUID(), description: newActionDesc.trim(), targetDate: newActionDate, completedAt: null, owner: newActionOwner || profile?.displayName || "" };
     await addAction(companyId, plan.id, plan.actions, action);
     setMemberPlan({ ...plan, actions: [...plan.actions, action] });
     setNewActionDesc(""); setNewActionOwner(""); setNewActionDate("");
   }
 
-  async function handleToggleAction(idx: number) {
+  async function handleToggleAction(actionId: string) {
     if (!companyId || !memberPlan) return;
-    const updated = [...memberPlan.actions];
-    updated[idx] = { ...updated[idx], completedAt: updated[idx].completedAt ? null : new Date().toISOString().split("T")[0] };
+    const updated = memberPlan.actions.map((a) =>
+      a.id === actionId ? { ...a, completedAt: a.completedAt ? null : new Date().toISOString().split("T")[0] } : a
+    );
     await updateActions(companyId, memberPlan.id, updated);
     setMemberPlan({ ...memberPlan, actions: updated });
   }
 
-  async function handleDeleteAction(idx: number) {
+  async function handleDeleteAction(actionId: string) {
     if (!companyId || !memberPlan) return;
-    if (!window.confirm("Delete this action item? This cannot be undone.")) return;
-    const updated = memberPlan.actions.filter((_, i) => i !== idx);
+    if (!window.confirm("Delete this action item? This cannot be undone. Any linked coaching notes will be moved to general notes.")) return;
+    const updatedActions = memberPlan.actions.filter((a) => a.id !== actionId);
+    const updatedNotes = memberPlan.notes.map((n) => n.actionItemId === actionId ? { ...n, actionItemId: null } : n);
+    await updateActions(companyId, memberPlan.id, updatedActions);
+    if (updatedNotes.some((n, i) => n !== memberPlan.notes[i])) {
+      await updateNotes(companyId, memberPlan.id, updatedNotes);
+    }
+    setMemberPlan({ ...memberPlan, actions: updatedActions, notes: updatedNotes });
+  }
+
+  async function handleChangeOwner(actionId: string, newOwner: string) {
+    if (!companyId || !memberPlan) return;
+    const updated = memberPlan.actions.map((a) => a.id === actionId ? { ...a, owner: newOwner } : a);
     await updateActions(companyId, memberPlan.id, updated);
     setMemberPlan({ ...memberPlan, actions: updated });
   }
 
-  async function handleChangeOwner(idx: number, newOwner: string) {
-    if (!companyId || !memberPlan) return;
-    const updated = [...memberPlan.actions];
-    updated[idx] = { ...updated[idx], owner: newOwner };
-    await updateActions(companyId, memberPlan.id, updated);
-    setMemberPlan({ ...memberPlan, actions: updated });
-  }
-
-  async function handleAddNote() {
-    if (!companyId || !newNoteText.trim()) return;
+  async function handleAddNote(actionItemId: string | null = null, textOverride?: string) {
+    if (!companyId) return;
+    const text = (textOverride ?? newNoteText).trim();
+    if (!text) return;
     let plan = memberPlan;
     if (!plan) {
       const id = await createActionPlan(companyId, { memberId, memberName: member?.name ?? "" });
       plan = { id, memberId, memberName: member?.name ?? "", actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
     }
-    const text = newNoteText.trim();
-    await addNote(companyId, plan.id, plan.notes, text);
-    setMemberPlan({ ...plan, notes: [...plan.notes, { text, createdAt: Timestamp.now() }] });
-    setNewNoteText("");
+    const newNote: ActionNote = { id: crypto.randomUUID(), actionItemId, text, createdAt: Timestamp.now() };
+    await addNote(companyId, plan.id, plan.notes, text, actionItemId);
+    setMemberPlan({ ...plan, notes: [...plan.notes, newNote] });
+    if (textOverride === undefined) setNewNoteText("");
   }
 
-  function startEditNote(idx: number) {
+  async function handleAddLinkedNote(actionId: string) {
+    const text = linkedNoteDraftText.trim();
+    if (!text) return;
+    await handleAddNote(actionId, text);
+    setLinkedNoteDraftFor(null);
+    setLinkedNoteDraftText("");
+  }
+
+  function startEditNote(noteId: string) {
     if (!memberPlan) return;
-    setEditingNoteIdx(idx);
-    setEditingNoteText(memberPlan.notes[idx]?.text ?? "");
+    const n = memberPlan.notes.find((nn) => nn.id === noteId);
+    if (!n) return;
+    setEditingNoteId(noteId);
+    setEditingNoteText(n.text);
   }
 
   function cancelEditNote() {
-    setEditingNoteIdx(null);
+    setEditingNoteId(null);
     setEditingNoteText("");
   }
 
-  async function handleSaveNote(idx: number) {
+  async function handleSaveNote(noteId: string) {
     if (!companyId || !memberPlan) return;
     const text = editingNoteText.trim();
     if (!text) return;
-    const updated = [...memberPlan.notes];
-    updated[idx] = { ...updated[idx], text };
+    const updated = memberPlan.notes.map((n) => n.id === noteId ? { ...n, text } : n);
     await updateNotes(companyId, memberPlan.id, updated);
     setMemberPlan({ ...memberPlan, notes: updated });
     cancelEditNote();
   }
 
-  async function handleDeleteNote(idx: number) {
+  async function handleDeleteNote(noteId: string) {
     if (!companyId || !memberPlan) return;
     if (!window.confirm("Delete this coaching note? This cannot be undone.")) return;
-    const updated = memberPlan.notes.filter((_, i) => i !== idx);
+    const updated = memberPlan.notes.filter((n) => n.id !== noteId);
     await updateNotes(companyId, memberPlan.id, updated);
     setMemberPlan({ ...memberPlan, notes: updated });
-    if (editingNoteIdx === idx) cancelEditNote();
+    if (editingNoteId === noteId) cancelEditNote();
   }
 
-  function startEditAction(idx: number) {
+  function startEditAction(actionId: string) {
     if (!memberPlan) return;
-    const a = memberPlan.actions[idx];
+    const a = memberPlan.actions.find((aa) => aa.id === actionId);
     if (!a) return;
-    setEditingActionIdx(idx);
+    setEditingActionId(actionId);
     setEditingActionDesc(a.description);
     setEditingActionDate(a.targetDate ?? "");
   }
 
   function cancelEditAction() {
-    setEditingActionIdx(null);
+    setEditingActionId(null);
     setEditingActionDesc("");
     setEditingActionDate("");
   }
 
-  async function handleSaveAction(idx: number) {
+  async function handleSaveAction(actionId: string) {
     if (!companyId || !memberPlan) return;
     const description = editingActionDesc.trim();
     if (!description) return;
-    const updated = [...memberPlan.actions];
-    updated[idx] = { ...updated[idx], description, targetDate: editingActionDate };
+    const updated = memberPlan.actions.map((a) => a.id === actionId ? { ...a, description, targetDate: editingActionDate } : a);
     await updateActions(companyId, memberPlan.id, updated);
     setMemberPlan({ ...memberPlan, actions: updated });
     cancelEditAction();
@@ -399,7 +425,11 @@ export default function MemberSummaryPage() {
     const recentNotes = (memberPlan?.notes ?? []).slice(0, 5);
     if (recentNotes.length > 0) {
       parts.push(`\nRecent Coaching Notes:`);
-      recentNotes.forEach((n) => parts.push(`- ${n.text}`));
+      recentNotes.forEach((n) => {
+        const linked = n.actionItemId ? memberPlan?.actions.find((a) => a.id === n.actionItemId) : null;
+        const prefix = linked ? `(re: ${linked.description}) ` : "";
+        parts.push(`- ${prefix}${n.text}`);
+      });
     }
 
     // --- Current Quarter Highlights ---
@@ -668,6 +698,85 @@ export default function MemberSummaryPage() {
     setTargets(targets.filter((x) => x.id !== targetId));
   }
 
+  function renderNoteRow(n: ActionNote) {
+    const dateLabel = n.createdAt?.toDate ? n.createdAt.toDate().toLocaleDateString() : "";
+    if (editingNoteId === n.id) {
+      return (
+        <div key={n.id} className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <input type="text" value={editingNoteText} onChange={(e) => setEditingNoteText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSaveNote(n.id); if (e.key === "Escape") cancelEditNote(); }}
+            className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" autoFocus />
+          <div className="flex gap-2">
+            <button onClick={() => handleSaveNote(n.id)} disabled={!editingNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Save</button>
+            <button onClick={cancelEditNote} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs font-semibold uppercase text-primary/60 transition hover:text-primary">Cancel</button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div key={n.id} className="group mt-1 flex items-start gap-2 text-sm text-primary/70">
+        <span className="flex-1"><span className="text-[10px] text-primary/30">{dateLabel} — </span>{n.text}</span>
+        {!isArchived && (
+          <>
+            <button onClick={() => startEditNote(n.id)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit note">✎</button>
+            <button onClick={() => handleDeleteNote(n.id)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete note">✕</button>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  function renderLinkedNoteThread(actionId: string) {
+    const linked = notesByActionId.get(actionId) ?? [];
+    const isDrafting = linkedNoteDraftFor === actionId;
+    if (linked.length === 0 && (isArchived || !isDrafting)) {
+      if (isArchived) return null;
+      return (
+        <div className="ml-6 mt-1">
+          <button
+            onClick={() => { setLinkedNoteDraftFor(actionId); setLinkedNoteDraftText(""); }}
+            className="text-[10px] font-semibold uppercase tracking-wider text-primary/30 transition hover:text-primary"
+          >
+            + Add note about this action item
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="ml-6 mt-1 border-l-2 border-brand-gray/40 pl-3">
+        {[...linked].reverse().map((n) => renderNoteRow(n))}
+        {!isArchived && !isDrafting && (
+          <button
+            onClick={() => { setLinkedNoteDraftFor(actionId); setLinkedNoteDraftText(""); }}
+            className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-primary/30 transition hover:text-primary"
+          >
+            + Add note about this action item
+          </button>
+        )}
+        {!isArchived && isDrafting && (
+          <div className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <input
+              type="text"
+              value={linkedNoteDraftText}
+              onChange={(e) => setLinkedNoteDraftText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAddLinkedNote(actionId);
+                if (e.key === "Escape") { setLinkedNoteDraftFor(null); setLinkedNoteDraftText(""); }
+              }}
+              placeholder="Note about this action item..."
+              autoFocus
+              className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => handleAddLinkedNote(actionId)} disabled={!linkedNoteDraftText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Save</button>
+              <button onClick={() => { setLinkedNoteDraftFor(null); setLinkedNoteDraftText(""); }} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs font-semibold uppercase text-primary/60 transition hover:text-primary">Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (loading) return <div className="flex min-h-screen items-center justify-center"><p className="animate-pulse text-lg font-light text-primary/70">Loading...</p></div>;
   if (!member) return <div className="min-h-screen bg-white px-4 py-6 lg:px-8 lg:py-12"><div className="mx-auto max-w-3xl"><p className="text-sm text-accent">Team member not found.</p><button onClick={() => router.back()} className="mt-4 text-sm font-medium text-primary/50 transition hover:text-primary">← Go Back</button></div></div>;
 
@@ -754,58 +863,60 @@ export default function MemberSummaryPage() {
               {openActions.length === 0 && completedActions.length === 0 && (
                 <p className="mt-2 text-sm text-primary/40">No action items yet.</p>
               )}
-              {openActions.map((a: ActionItem, i: number) => {
-                const actionIdx = memberPlan?.actions.indexOf(a) ?? -1;
-                const isEditing = editingActionIdx === actionIdx && actionIdx >= 0;
+              {openActions.map((a: ActionItem) => {
+                const isEditing = editingActionId === a.id;
                 if (isEditing) {
                   return (
-                    <div key={i} className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 rounded-[4px] border border-primary/40 p-2.5">
+                    <div key={a.id} className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 rounded-[4px] border border-primary/40 p-2.5">
                       <input type="text" value={editingActionDesc} onChange={(e) => setEditingActionDesc(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") handleSaveAction(actionIdx); if (e.key === "Escape") cancelEditAction(); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") handleSaveAction(a.id); if (e.key === "Escape") cancelEditAction(); }}
                         className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" autoFocus />
                       <input type="date" value={editingActionDate} onChange={(e) => setEditingActionDate(e.target.value)}
                         className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                       <div className="flex gap-2">
-                        <button onClick={() => handleSaveAction(actionIdx)} disabled={!editingActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Save</button>
+                        <button onClick={() => handleSaveAction(a.id)} disabled={!editingActionDesc.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Save</button>
                         <button onClick={cancelEditAction} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs font-semibold uppercase text-primary/60 transition hover:text-primary">Cancel</button>
                       </div>
                     </div>
                   );
                 }
                 return (
-                  <div key={i} className="mt-2 flex items-center gap-3 rounded-[4px] border border-brand-gray/50 p-2.5">
-                    <input type="checkbox" checked={false} disabled={isArchived} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
-                    <span className="flex-1 text-sm text-primary">{a.description}</span>
-                    <select
-                      value={a.owner ?? ""}
-                      disabled={isArchived}
-                      onChange={(e) => { if (actionIdx >= 0) handleChangeOwner(actionIdx, e.target.value); }}
-                      className="rounded-[2px] border border-brand-gray/50 bg-white px-1.5 py-0.5 text-[10px] text-primary/60 outline-none disabled:opacity-50"
-                    >
-                      <option value="">Unassigned</option>
-                      {profile?.displayName && <option value={profile.displayName}>{profile.displayName}</option>}
-                      {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
-                    </select>
-                    {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
-                    {!isArchived && <button onClick={() => { if (actionIdx >= 0) startEditAction(actionIdx); }} className="text-xs text-primary/30 transition hover:text-primary" title="Edit action">✎</button>}
-                    {!isArchived && <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
+                  <div key={a.id} className="mt-2">
+                    <div className="flex items-center gap-3 rounded-[4px] border border-brand-gray/50 p-2.5">
+                      <input type="checkbox" checked={false} disabled={isArchived} onChange={() => handleToggleAction(a.id)} className="h-4 w-4 accent-green-500" />
+                      <span className="flex-1 text-sm text-primary">{a.description}</span>
+                      <select
+                        value={a.owner ?? ""}
+                        disabled={isArchived}
+                        onChange={(e) => handleChangeOwner(a.id, e.target.value)}
+                        className="rounded-[2px] border border-brand-gray/50 bg-white px-1.5 py-0.5 text-[10px] text-primary/60 outline-none disabled:opacity-50"
+                      >
+                        <option value="">Unassigned</option>
+                        {profile?.displayName && <option value={profile.displayName}>{profile.displayName}</option>}
+                        {member && member.name !== profile?.displayName && <option value={member.name}>{member.name}</option>}
+                      </select>
+                      {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
+                      {!isArchived && <button onClick={() => startEditAction(a.id)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit action">✎</button>}
+                      {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
+                    </div>
+                    {renderLinkedNoteThread(a.id)}
                   </div>
                 );
               })}
               {completedActions.length > 0 && (
                 <div className="mt-2">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/30">Completed</p>
-                  {completedActions.map((a: ActionItem, i: number) => {
-                    const actionIdx = memberPlan?.actions.indexOf(a) ?? -1;
-                    return (
-                      <div key={i} className="mt-1 flex items-center gap-3 rounded-[4px] border border-brand-gray/30 p-2.5 opacity-60">
-                        <input type="checkbox" checked={true} disabled={isArchived} onChange={() => { if (actionIdx >= 0) handleToggleAction(actionIdx); }} className="h-4 w-4 accent-green-500" />
+                  {completedActions.map((a: ActionItem) => (
+                    <div key={a.id} className="mt-1">
+                      <div className="flex items-center gap-3 rounded-[4px] border border-brand-gray/30 p-2.5 opacity-60">
+                        <input type="checkbox" checked={true} disabled={isArchived} onChange={() => handleToggleAction(a.id)} className="h-4 w-4 accent-green-500" />
                         <span className="flex-1 text-sm text-primary line-through">{a.description}</span>
                         {a.owner && <span className="text-[10px] text-primary/30">{a.owner}</span>}
-                        {!isArchived && <button onClick={() => { if (actionIdx >= 0) handleDeleteAction(actionIdx); }} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
+                        {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
                       </div>
-                    );
-                  })}
+                      {renderLinkedNoteThread(a.id)}
+                    </div>
+                  ))}
                 </div>
               )}
               {!isArchived && (
@@ -826,45 +937,17 @@ export default function MemberSummaryPage() {
                   </div>
                 </div>
               )}
-              {memberPlan && memberPlan.notes.length > 0 && (
+              {generalNotes.length > 0 && (
                 <div className="mt-4 border-t border-brand-gray pt-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/30">Coaching Notes</p>
-                  {memberPlan.notes.map((_, displayIdx) => {
-                    const noteIdx = memberPlan.notes.length - 1 - displayIdx;
-                    const n = memberPlan.notes[noteIdx];
-                    const dateLabel = n.createdAt?.toDate ? n.createdAt.toDate().toLocaleDateString() : "";
-                    if (editingNoteIdx === noteIdx) {
-                      return (
-                        <div key={noteIdx} className="mt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                          <input type="text" value={editingNoteText} onChange={(e) => setEditingNoteText(e.target.value)}
-                            onKeyDown={(e) => { if (e.key === "Enter") handleSaveNote(noteIdx); if (e.key === "Escape") cancelEditNote(); }}
-                            className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" autoFocus />
-                          <div className="flex gap-2">
-                            <button onClick={() => handleSaveNote(noteIdx)} disabled={!editingNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50">Save</button>
-                            <button onClick={cancelEditNote} className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs font-semibold uppercase text-primary/60 transition hover:text-primary">Cancel</button>
-                          </div>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div key={noteIdx} className="group mt-1 flex items-start gap-2 text-sm text-primary/70">
-                        <span className="flex-1"><span className="text-[10px] text-primary/30">{dateLabel} — </span>{n.text}</span>
-                        {!isArchived && (
-                          <>
-                            <button onClick={() => startEditNote(noteIdx)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit note">✎</button>
-                            <button onClick={() => handleDeleteNote(noteIdx)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete note">✕</button>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {[...generalNotes].reverse().map((n) => renderNoteRow(n))}
                 </div>
               )}
               {!isArchived && (
                 <div className="mt-3 flex flex-col sm:flex-row gap-2">
                   <input type="text" value={newNoteText} onChange={(e) => setNewNoteText(e.target.value)} placeholder="Add a coaching note..."
                     className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" onKeyDown={(e) => { if (e.key === "Enter") handleAddNote(); }} />
-                  <button onClick={handleAddNote} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add Note</button>
+                  <button onClick={() => handleAddNote()} disabled={!newNoteText.trim()} className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase text-white transition hover:opacity-90 disabled:opacity-50 whitespace-nowrap">Add Note</button>
                 </div>
               )}
             </div>
@@ -1063,9 +1146,10 @@ export default function MemberSummaryPage() {
                             </div>
                             <div className="relative mt-1">
                               {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                              <input type="text" value={pa?.actual === null ? "" : formatNumber(pa?.actual ?? 0)}
+                              <NumericInput
+                                value={pa?.actual ?? null}
                                 disabled={isArchived}
-                                onChange={(e) => { const raw = stripCommas(e.target.value); updateProductivityActual(t.id, raw === "" ? null : parseFloat(raw) || 0); }}
+                                onChange={(v) => updateProductivityActual(t.id, v)}
                                 placeholder="Enter actual"
                                 className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                               {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
@@ -1083,9 +1167,10 @@ export default function MemberSummaryPage() {
                                   <span className="text-[9px] text-primary/30">Target: {prefix}{formatNumber(t.monthlyTargets?.[m] ?? 0)}{suffix}</span>
                                   <div className="relative flex-1">
                                     {prefix && <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-primary/40">{prefix}</span>}
-                                    <input type="text" value={mVal === null ? "" : formatNumber(mVal ?? 0)}
+                                    <NumericInput
+                                      value={mVal ?? null}
                                       disabled={isArchived}
-                                      onChange={(e) => { const raw = stripCommas(e.target.value); updateMonthlyActual(t.id, m, raw === "" ? null : parseFloat(raw) || 0); }}
+                                      onChange={(v) => updateMonthlyActual(t.id, m, v)}
                                       placeholder="Actual"
                                       className={`w-full rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-xs text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-5" : ""} ${suffix ? "pr-5" : ""}`} />
                                     {suffix && <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-primary/40">{suffix}</span>}
@@ -1175,9 +1260,9 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
   const [unit, setUnit] = useState<UnitType>(target.unit);
   const [frequency, setFrequency] = useState<Frequency>(target.frequency ?? "quarterly");
   const [weightStr, setWeightStr] = useState(String(target.weight));
-  const [targetStr, setTargetStr] = useState(String(target.target));
-  const [minStr, setMinStr] = useState(String(target.min));
-  const [maxStr, setMaxStr] = useState(String(target.max));
+  const [targetVal, setTargetVal] = useState<number | null>(target.target);
+  const [minVal, setMinVal] = useState<number | null>(target.min);
+  const [maxVal, setMaxVal] = useState<number | null>(target.max);
   const [showThreshold, setShowThreshold] = useState(target.type === "bigger" ? target.min !== 0 : target.max !== 0);
   const [mTargets, setMTargets] = useState<MonthlyValues>(target.monthlyTargets ?? { ...DEFAULT_MONTHLY });
   const [mMin, setMMin] = useState<MonthlyValues>(target.monthlyMin ?? { ...DEFAULT_MONTHLY });
@@ -1187,13 +1272,13 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
 
   function handleSave() {
     const weight = parseFloat(weightStr) || 0;
-    const targetVal = parseFloat(targetStr) || 0;
-    const minVal = parseFloat(minStr) || 0;
-    const maxVal = parseFloat(maxStr) || 0;
+    const targetNum = targetVal ?? 0;
+    const minNum = minVal ?? 0;
+    const maxNum = maxVal ?? 0;
     if (isMonthly) {
       onSave({ name, type, unit, frequency, weight, target: 0, min: 0, max: 0, monthlyTargets: mTargets, monthlyMin: isBigger && showThreshold ? mMin : { ...DEFAULT_MONTHLY }, monthlyMax: !isBigger && showThreshold ? mMax : { ...DEFAULT_MONTHLY } });
     } else {
-      onSave({ name, type, unit, frequency, weight, target: targetVal, min: isBigger && showThreshold ? minVal : 0, max: !isBigger && showThreshold ? maxVal : 0, monthlyTargets: null, monthlyMin: null, monthlyMax: null });
+      onSave({ name, type, unit, frequency, weight, target: targetNum, min: isBigger && showThreshold ? minNum : 0, max: !isBigger && showThreshold ? maxNum : 0, monthlyTargets: null, monthlyMin: null, monthlyMax: null });
     }
   }
 
@@ -1210,7 +1295,7 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div>
           <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Type</label>
-          <select value={type} disabled={readOnly} onChange={(e) => { setType(e.target.value as TargetType); setShowThreshold(false); setMinStr("0"); setMaxStr("0"); }}
+          <select value={type} disabled={readOnly} onChange={(e) => { setType(e.target.value as TargetType); setShowThreshold(false); setMinVal(0); setMaxVal(0); }}
             className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50">
             <option value="bigger">Bigger is Better</option><option value="smaller">Smaller is Better</option>
           </select>
@@ -1243,7 +1328,7 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
               <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Target</label>
               <div className="relative mt-1">
                 {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                <input type="text" value={targetStr} disabled={readOnly} onChange={(e) => setTargetStr(stripCommas(e.target.value))}
+                <NumericInput value={targetVal} disabled={readOnly} onChange={setTargetVal}
                   className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                 {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
               </div>
@@ -1259,7 +1344,7 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
                 <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Minimum</label>
                 <div className="relative mt-1">
                   {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                  <input type="text" value={minStr} disabled={readOnly} onChange={(e) => setMinStr(stripCommas(e.target.value))}
+                  <NumericInput value={minVal} disabled={readOnly} onChange={setMinVal}
                     className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                   {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                 </div>
@@ -1268,7 +1353,7 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
                 <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Maximum</label>
                 <div className="relative mt-1">
                   {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                  <input type="text" value={maxStr} disabled={readOnly} onChange={(e) => setMaxStr(stripCommas(e.target.value))}
+                  <NumericInput value={maxVal} disabled={readOnly} onChange={setMaxVal}
                     className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                   {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                 </div>
@@ -1292,7 +1377,7 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
                   <label className="text-[9px] font-semibold uppercase tracking-wider text-primary/30">Target</label>
                   <div className="relative mt-1">
                     {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                    <input type="text" value={mTargets[m]} disabled={readOnly} onChange={(e) => setMTargets({ ...mTargets, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
+                    <NumericInput value={mTargets[m]} disabled={readOnly} onChange={(v) => setMTargets({ ...mTargets, [m]: v ?? 0 })}
                       className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                     {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                   </div>
@@ -1302,7 +1387,7 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
                     <label className="text-[9px] font-semibold uppercase tracking-wider text-primary/30">Minimum</label>
                     <div className="relative mt-1">
                       {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                      <input type="text" value={mMin[m]} disabled={readOnly} onChange={(e) => setMMin({ ...mMin, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
+                      <NumericInput value={mMin[m]} disabled={readOnly} onChange={(v) => setMMin({ ...mMin, [m]: v ?? 0 })}
                         className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                       {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                     </div>
@@ -1313,7 +1398,7 @@ function TargetEditor({ target, onSave, saving, readOnly = false }: { target: Pr
                     <label className="text-[9px] font-semibold uppercase tracking-wider text-primary/30">Maximum</label>
                     <div className="relative mt-1">
                       {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{prefix}</span>}
-                      <input type="text" value={mMax[m]} disabled={readOnly} onChange={(e) => setMMax({ ...mMax, [m]: parseFloat(stripCommas(e.target.value)) || 0 })}
+                      <NumericInput value={mMax[m]} disabled={readOnly} onChange={(v) => setMMax({ ...mMax, [m]: v ?? 0 })}
                         className={`w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary disabled:opacity-50 ${prefix ? "pl-7" : ""} ${suffix ? "pr-7" : ""}`} />
                       {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-primary/40">{suffix}</span>}
                     </div>
