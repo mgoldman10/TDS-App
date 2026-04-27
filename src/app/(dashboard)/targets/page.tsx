@@ -16,7 +16,6 @@ import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { TeamMember } from "@/types/team";
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues } from "@/types/productivity";
 import { DEFAULT_MONTHLY } from "@/types/productivity";
-import { formatNumber, stripCommas } from "@/lib/formatNumber";
 import NumericInput from "@/components/NumericInput";
 
 export default function ProductivityTargetsPage() {
