@@ -759,7 +759,7 @@ export default function TeamsPage() {
             )}
             {canManage && !isTopLevel && (
               <button onClick={() => handleDeleteTeam(team.id)}
-                className="text-xs text-accent/50 transition hover:text-accent">
+                className="text-xs text-red-500 transition hover:text-red-700">
                 ✕
               </button>
             )}
@@ -896,7 +896,7 @@ export default function TeamsPage() {
                                 setArchivingMemberId(m.id); setArchivingTeamId(team.id); setArchiveReason("");
                                 setArchiveMemberHasAssessments(null);
                                 if (companyId) getAssessmentHistory(companyId, m.id).then((a) => setArchiveMemberHasAssessments(a.length > 0));
-                              }} className="text-xs text-accent/50 transition hover:text-accent" title="Archive member">
+                              }} className="text-xs text-red-500 transition hover:text-red-700" title="Archive member">
                                 ✕
                               </button>
                             </>

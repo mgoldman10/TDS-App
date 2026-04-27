@@ -448,7 +448,7 @@ function TargetCard({
         <button onClick={onToggle} className="px-1 text-sm text-primary/50">
           {isExpanded ? "▲" : "▼"}
         </button>
-        <button onClick={onDelete} className="text-xs text-accent/50 transition hover:text-accent">
+        <button onClick={onDelete} className="text-xs text-red-500 transition hover:text-red-700">
           ✕
         </button>
       </div>

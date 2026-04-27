@@ -280,7 +280,7 @@ export default function CoreValuesPage() {
                               behaviors: editing.behaviors.filter((_, j) => j !== i),
                             });
                           }}
-                          className="text-xs text-accent/50 transition hover:text-accent"
+                          className="text-xs text-red-500 transition hover:text-red-700"
                         >
                           ✕
                         </button>
