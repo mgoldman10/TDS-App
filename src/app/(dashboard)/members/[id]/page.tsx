@@ -175,9 +175,13 @@ export default function MemberSummaryPage() {
           };
         });
         setProductivityActuals(merged);
+        setQuarterIncomplete(existing.quarterIncomplete ?? false);
+        setCompletedMonths(existing.completedMonths === 2 ? 2 : 1);
       } else {
         setCultureFitScores(cvData.map((cv) => ({ coreValueId: cv.id, coreValueName: cv.name, rating: "" as CultureFitRating })));
         setProductivityActuals(tData.map((t) => ({ targetId: t.id, targetName: t.name, actual: null, monthlyActuals: t.frequency === "monthly" ? { month1: null, month2: null, month3: null } : null })));
+        setQuarterIncomplete(false);
+        setCompletedMonths(1);
       }
     } catch (err) { console.error("Load assessment error:", err); }
     setAssessmentLoading(false);
@@ -188,6 +192,7 @@ export default function MemberSummaryPage() {
   const fitCaps = scoringParams.cultureFitCaps ?? DEFAULT_CULTURE_FIT_CAPS;
   const cultureFitResult = calculateCultureFitScore(cultureFitScores, ratingScores, fitCaps);
   const effectiveMonths = quarterIncomplete ? completedMonths : 3;
+  const completionFactor = effectiveMonths / 3;
   const productivityActualsMap: Record<string, number | null | NullableMonthlyValues> = {};
   for (const pa of productivityActuals) {
     const t = targets.find((tgt) => tgt.id === pa.targetId);
@@ -201,7 +206,7 @@ export default function MemberSummaryPage() {
       productivityActualsMap[pa.targetId] = pa.monthlyActuals ?? pa.actual;
     }
   }
-  const productivityScore = calculateTotalProductivityScore(targets, productivityActualsMap);
+  const productivityScore = calculateTotalProductivityScore(targets, productivityActualsMap, completionFactor);
   const allCoreValuesRated = cultureFitScores.length > 0 && cultureFitScores.every((s) => s.rating);
   const category = allCoreValuesRated ? assignCategory(cultureFitResult.finalScore, productivityScore, scoringParams) : null;
 
@@ -239,7 +244,7 @@ export default function MemberSummaryPage() {
     const unrated = cultureFitScores.filter((s) => !s.rating);
     if (unrated.length > 0) { setError(`Please rate all core values. ${unrated.length} unrated.`); return; }
     setAssessmentSaving(true); setError(""); setAssessmentSuccess("");
-    const data = { cultureFitScores, cultureFitScore: cultureFitResult.finalScore, productivityActuals, productivityScore, performanceCategory: (category ?? "MP") as PerformanceCategory };
+    const data = { cultureFitScores, cultureFitScore: cultureFitResult.finalScore, productivityActuals, productivityScore, performanceCategory: (category ?? "MP") as PerformanceCategory, quarterIncomplete, completedMonths: quarterIncomplete ? completedMonths : 3 };
     try {
       if (existingAssessment) {
         await updateAssessment(companyId, existingAssessment.id, data);
@@ -719,7 +724,7 @@ export default function MemberSummaryPage() {
         {!isArchived && (
           <>
             <button onClick={() => startEditNote(n.id)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit note">✎</button>
-            <button onClick={() => handleDeleteNote(n.id)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete note">✕</button>
+            <button onClick={() => handleDeleteNote(n.id)} className="text-xs text-red-500 transition hover:text-red-700" title="Delete note">✕</button>
           </>
         )}
       </div>
@@ -897,7 +902,7 @@ export default function MemberSummaryPage() {
                       </select>
                       {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
                       {!isArchived && <button onClick={() => startEditAction(a.id)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit action">✎</button>}
-                      {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
+                      {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-red-500 transition hover:text-red-700" title="Delete action">✕</button>}
                     </div>
                     {renderLinkedNoteThread(a.id)}
                   </div>
@@ -912,7 +917,7 @@ export default function MemberSummaryPage() {
                         <input type="checkbox" checked={true} disabled={isArchived} onChange={() => handleToggleAction(a.id)} className="h-4 w-4 accent-green-500" />
                         <span className="flex-1 text-sm text-primary line-through">{a.description}</span>
                         {a.owner && <span className="text-[10px] text-primary/30">{a.owner}</span>}
-                        {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-accent/30 transition hover:text-accent" title="Delete action">✕</button>}
+                        {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-red-500 transition hover:text-red-700" title="Delete action">✕</button>}
                       </div>
                       {renderLinkedNoteThread(a.id)}
                     </div>
@@ -1215,7 +1220,7 @@ export default function MemberSummaryPage() {
                       <span className="ml-2 text-xs text-primary/40">{t.weight}% · {t.type === "bigger" ? "Bigger" : "Smaller"} · {t.frequency === "monthly" ? "Monthly" : "Quarterly"}</span>
                     </button>
                     <button onClick={() => setExpandedTargetId(expandedTargetId === t.id ? null : t.id)} className="text-sm text-primary/50">{expandedTargetId === t.id ? "▲" : "▼"}</button>
-                    {!isArchived && <button onClick={() => handleDeleteTarget(t.id)} className="text-xs text-accent/50 transition hover:text-accent">✕</button>}
+                    {!isArchived && <button onClick={() => handleDeleteTarget(t.id)} className="text-xs text-red-500 transition hover:text-red-700">✕</button>}
                   </div>
                   {expandedTargetId === t.id && (
                     <TargetEditor target={t} onSave={(u) => handleSaveTarget(t.id, u)} saving={targetSaving} readOnly={isArchived} />

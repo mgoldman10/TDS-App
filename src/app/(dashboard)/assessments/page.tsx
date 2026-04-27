@@ -141,6 +141,9 @@ export default function AssessmentsPage() {
           };
         });
         setProductivityActuals(merged);
+        setQuarterIncomplete(existing.quarterIncomplete ?? false);
+        const savedMonths = existing.completedMonths;
+        setCompletedMonths(savedMonths === 2 ? 2 : 1);
       } else {
         // Initialize blank scores
         setCultureFitScores(
@@ -158,6 +161,8 @@ export default function AssessmentsPage() {
             monthlyActuals: t.frequency === "monthly" ? { month1: null, month2: null, month3: null } : null,
           }))
         );
+        setQuarterIncomplete(false);
+        setCompletedMonths(1);
       }
     } catch (err) {
       console.error("Load member error:", err);
@@ -171,25 +176,24 @@ export default function AssessmentsPage() {
   const fitCaps = scoringParams.cultureFitCaps ?? DEFAULT_CULTURE_FIT_CAPS;
   const cultureFitResult = calculateCultureFitScore(cultureFitScores, ratingScores, fitCaps);
   const effectiveMonths = quarterIncomplete ? completedMonths : 3;
+  const completionFactor = effectiveMonths / 3;
   const productivityActualsMap: Record<string, number | null | NullableMonthlyValues> = {};
   for (const pa of productivityActuals) {
     const t = targets.find((tgt) => tgt.id === pa.targetId);
     if (t?.frequency === "monthly" && pa.monthlyActuals) {
-      // For monthly targets, null out months beyond completedMonths
+      // For monthly targets, null out months beyond completedMonths so the scorer averages
+      // only the months that have elapsed.
       productivityActualsMap[pa.targetId] = {
         month1: pa.monthlyActuals.month1,
         month2: effectiveMonths >= 2 ? pa.monthlyActuals.month2 : null,
         month3: effectiveMonths >= 3 ? pa.monthlyActuals.month3 : null,
       };
-    } else if (t?.frequency === "quarterly" && quarterIncomplete) {
-      // For quarterly targets with incomplete quarter, scale: actual * (completedMonths/3)
-      // Actually, just pass through — the user enters what they have and we weight proportionally
-      productivityActualsMap[pa.targetId] = pa.actual;
     } else {
+      // Quarterly targets: pass the raw actual; pro-rating happens in calculateTargetScore via completionFactor.
       productivityActualsMap[pa.targetId] = pa.monthlyActuals ?? pa.actual;
     }
   }
-  const productivityScore = calculateTotalProductivityScore(targets, productivityActualsMap);
+  const productivityScore = calculateTotalProductivityScore(targets, productivityActualsMap, completionFactor);
   const { total: weightTotal, valid: weightsValid } = targets.length > 0 ? validateWeights(targets) : { total: 0, valid: true };
   const allCoreValuesRated = cultureFitScores.length > 0 && cultureFitScores.every((s) => s.rating);
   const isComplete = allCoreValuesRated;
@@ -239,6 +243,8 @@ export default function AssessmentsPage() {
       productivityActuals,
       productivityScore,
       performanceCategory: (category ?? "MP") as PerformanceCategory,
+      quarterIncomplete,
+      completedMonths: quarterIncomplete ? completedMonths : 3,
     };
 
     try {

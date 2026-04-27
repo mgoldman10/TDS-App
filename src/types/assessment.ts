@@ -57,6 +57,10 @@ export interface Assessment {
   productivityActuals: ProductivityActual[];
   productivityScore: number;
   performanceCategory: PerformanceCategory;
+  /** When true, the actual was entered before the quarter ended; productivity is pro-rated. */
+  quarterIncomplete?: boolean;
+  /** Months of the quarter elapsed when the actual was recorded (1 or 2). */
+  completedMonths?: number;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

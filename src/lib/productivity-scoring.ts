@@ -37,12 +37,16 @@ function scorePeriod(
 
 /**
  * Calculate the adjusted score for a target.
- * For quarterly: single score from single actual (null = skip).
- * For monthly: average only the months that have data (null months skipped).
+ * For quarterly: single score from single actual (null = skip). When `completionFactor` < 1
+ * (quarter incomplete), target/min/max are scaled down by that factor so a partial-period
+ * actual is graded against a pro-rated band.
+ * For monthly: average only the months that have data (null months skipped). The monthly
+ * path is naturally pro-rated already — callers null out months that haven't elapsed.
  */
 export function calculateTargetScore(
   t: ProductivityTarget,
-  actual: number | null | MonthlyValues | NullableMonthlyValues
+  actual: number | null | MonthlyValues | NullableMonthlyValues,
+  completionFactor: number = 1
 ): { adjustedScore: number; weightedScore: number; hasData: boolean } {
   let adjustedScore: number;
   let hasData = false;
@@ -64,8 +68,18 @@ export function calculateTargetScore(
     adjustedScore = count > 0 ? sum / count : 0;
     hasData = count > 0;
   } else if (actual !== null && typeof actual === "number") {
-    // Quarterly: single value
-    adjustedScore = scorePeriod(t.type, t.target, t.min, t.max, actual);
+    // Quarterly: single value, optionally pro-rated for an incomplete quarter.
+    // Percentage-unit targets are rates, not cumulative totals — they aren't pro-rated.
+    const factor = t.frequency === "quarterly"
+      && t.unit !== "percentage"
+      && completionFactor > 0
+      && completionFactor < 1
+      ? completionFactor
+      : 1;
+    const effectiveTarget = t.target * factor;
+    const effectiveMin = t.min * factor;
+    const effectiveMax = t.max * factor;
+    adjustedScore = scorePeriod(t.type, effectiveTarget, effectiveMin, effectiveMax, actual);
     hasData = true;
   } else {
     adjustedScore = 0;
@@ -79,12 +93,13 @@ export function calculateTargetScore(
 /** Calculate total productivity score from all targets + actuals */
 export function calculateTotalProductivityScore(
   targets: ProductivityTarget[],
-  actuals: Record<string, number | null | MonthlyValues | NullableMonthlyValues>
+  actuals: Record<string, number | null | MonthlyValues | NullableMonthlyValues>,
+  completionFactor: number = 1
 ): number {
   let total = 0;
   for (const t of targets) {
     const actual = actuals[t.id] ?? null;
-    const { weightedScore } = calculateTargetScore(t, actual);
+    const { weightedScore } = calculateTargetScore(t, actual, completionFactor);
     total += weightedScore;
   }
   return Math.round(total * 10) / 10;

@@ -64,6 +64,8 @@ export async function createAssessment(
     productivityActuals: ProductivityActual[];
     productivityScore: number;
     performanceCategory: PerformanceCategory;
+    quarterIncomplete?: boolean;
+    completedMonths?: number;
   }
 ): Promise<string> {
   const ref = await addDoc(assessmentsRef(companyId), {
@@ -84,6 +86,8 @@ export async function updateAssessment(
     productivityActuals: ProductivityActual[];
     productivityScore: number;
     performanceCategory: PerformanceCategory;
+    quarterIncomplete: boolean;
+    completedMonths: number;
   }>
 ): Promise<void> {
   await updateDoc(doc(db, "companies", companyId, "assessments", assessmentId), {
