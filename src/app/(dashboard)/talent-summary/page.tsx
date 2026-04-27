@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
@@ -34,7 +34,9 @@ export default function TalentSummaryPage() {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
-  const [filterMode, setFilterMode] = useState("my-reports"); // "all", "my-reports", "team-reports", or a teamId
+  const [filterModes, setFilterModes] = useState<string[]>(["my-reports"]);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement | null>(null);
   const [privacyMode, setPrivacyMode] = useState(false);
   const [allAssessments, setAllAssessments] = useState<Assessment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +52,17 @@ export default function TalentSummaryPage() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, companyId, selectedYear, selectedQuarter]);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (filterRef.current && !filterRef.current.contains(e.target as Node)) {
+        setFilterOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [filterOpen]);
 
   async function loadData() {
     if (!companyId) return;
@@ -81,54 +94,44 @@ export default function TalentSummaryPage() {
     teams.some((sub) => sub.parentTeamId === t.id)
   );
 
-  // Filter based on selected mode
-  // filterMode can be:
+  // A single filterMode can be:
   //   "all" — all assessments (admin only)
   //   "my-reports" — only current user's assessments
   //   "reports-of:{teamId}" — direct reports of that team's members (excludes the team members themselves)
   //   "{teamId}" — members of a specific team
-  const filteredAssessments = (() => {
-    if (filterMode === "all") return authorizedAssessments;
+  function matchesMode(a: Assessment, mode: string): boolean {
+    if (mode === "all") return true;
+    if (mode === "my-reports") return a.assessedByUserId === profile?.uid;
 
-    if (filterMode === "my-reports") {
-      return authorizedAssessments.filter((a) => a.assessedByUserId === profile?.uid);
-    }
-
-    if (filterMode.startsWith("reports-of:")) {
-      // "Direct Reports of [Team]" — show people assessed by members of this team,
-      // but NOT the team members themselves
-      const parentTeamId = filterMode.replace("reports-of:", "");
+    if (mode.startsWith("reports-of:")) {
+      const parentTeamId = mode.replace("reports-of:", "");
       const parentTeam = teams.find((t) => t.id === parentTeamId);
-      if (!parentTeam) return authorizedAssessments;
-
-      // Get sub-team leaders' names (these are the team members "in the room")
+      if (!parentTeam) return true;
       const subTeams = teams.filter((t) => t.parentTeamId === parentTeamId);
       const inTheRoom = new Set<string>();
-      // The leader of the parent team
       if (parentTeam.leaderName) inTheRoom.add(parentTeam.leaderName);
-      // Sub-team leaders (they are members of the parent team)
       for (const st of subTeams) {
         if (st.leaderName) inTheRoom.add(st.leaderName);
       }
-      // Also add regular members of the parent team
       for (const m of teamMembers) {
         if (m.teamId === parentTeamId) inTheRoom.add(m.name);
       }
-
-      // Show assessments for people NOT in the room
-      return authorizedAssessments.filter((a) => !inTheRoom.has(a.memberName));
+      return !inTheRoom.has(a.memberName);
     }
 
     // Specific team ID — show members of that team
-    return authorizedAssessments.filter((a) => {
-      const member = teamMembers.find((m) => m.id === a.memberId);
-      if (!member) return false;
-      if (member.teamId === filterMode) return true;
-      const team = teams.find((t) => t.id === filterMode);
-      if (team && team.leaderName === a.memberName) return true;
-      return false;
-    });
-  })();
+    const member = teamMembers.find((m) => m.id === a.memberId);
+    if (!member) return false;
+    if (member.teamId === mode) return true;
+    const team = teams.find((t) => t.id === mode);
+    if (team && team.leaderName === a.memberName) return true;
+    return false;
+  }
+
+  const effectiveModes = filterModes.length > 0 ? filterModes : ["my-reports"];
+  const filteredAssessments = authorizedAssessments.filter((a) =>
+    effectiveModes.some((m) => matchesMode(a, m))
+  );
 
   // Exclude archived members from current period; include them in historical
   const isCurrentPeriod = selectedYear === currentFY && selectedQuarter === currentFQ;
@@ -152,30 +155,7 @@ export default function TalentSummaryPage() {
     const authorized = isAdmin
       ? assessmentsToFilter
       : assessmentsToFilter.filter((a) => a.assessedByUserId === profile?.uid);
-
-    if (filterMode === "all") return authorized;
-    if (filterMode === "my-reports") return authorized.filter((a) => a.assessedByUserId === profile?.uid);
-
-    if (filterMode.startsWith("reports-of:")) {
-      const parentTeamId = filterMode.replace("reports-of:", "");
-      const parentTeam = teams.find((t) => t.id === parentTeamId);
-      if (!parentTeam) return authorized;
-      const subTeams = teams.filter((t) => t.parentTeamId === parentTeamId);
-      const inTheRoom = new Set<string>();
-      if (parentTeam.leaderName) inTheRoom.add(parentTeam.leaderName);
-      for (const st of subTeams) { if (st.leaderName) inTheRoom.add(st.leaderName); }
-      for (const m of teamMembers) { if (m.teamId === parentTeamId) inTheRoom.add(m.name); }
-      return authorized.filter((a) => !inTheRoom.has(a.memberName));
-    }
-
-    return authorized.filter((a) => {
-      const member = teamMembers.find((m) => m.id === a.memberId);
-      if (!member) return false;
-      if (member.teamId === filterMode) return true;
-      const team = teams.find((t) => t.id === filterMode);
-      if (team && team.leaderName === a.memberName) return true;
-      return false;
-    });
+    return authorized.filter((a) => effectiveModes.some((m) => matchesMode(a, m)));
   }
 
   // Compute TDI trend across all quarters using the same filter
@@ -232,19 +212,65 @@ export default function TalentSummaryPage() {
               {[1, 2, 3, 4].map((q) => <option key={q} value={q}>Q{q}</option>)}
             </select>
           </div>
-          <div>
+          <div ref={filterRef} className="relative">
             <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">View</label>
-            <select value={filterMode} onChange={(e) => setFilterMode(e.target.value)}
-              className="mt-1 block rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary">
-              <option value="my-reports">My Direct Reports</option>
-              {isAdmin && <option value="all">All Assessments</option>}
-              {teamsWithSubTeams.map((t) => (
-                <option key={`reports-${t.id}`} value={`reports-of:${t.id}`}>
-                  Direct Reports of {t.name}
-                </option>
-              ))}
-              {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
+            <button
+              type="button"
+              onClick={() => setFilterOpen((o) => !o)}
+              className="mt-1 flex min-w-[200px] items-center justify-between gap-2 rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none transition focus:border-primary"
+            >
+              <span className="truncate">{(() => {
+                const labelFor = (mode: string) => {
+                  if (mode === "all") return "All Assessments";
+                  if (mode === "my-reports") return "My Direct Reports";
+                  if (mode.startsWith("reports-of:")) {
+                    const tid = mode.replace("reports-of:", "");
+                    return `Direct Reports of ${teams.find((t) => t.id === tid)?.name ?? "team"}`;
+                  }
+                  return teams.find((t) => t.id === mode)?.name ?? "team";
+                };
+                if (filterModes.length === 0) return "My Direct Reports";
+                if (filterModes.length === 1) return labelFor(filterModes[0]);
+                return `${filterModes.length} selected`;
+              })()}</span>
+              <span className="text-primary/40">{filterOpen ? "▲" : "▼"}</span>
+            </button>
+            {filterOpen && (
+              <div className="absolute z-10 mt-1 max-h-72 w-72 overflow-y-auto rounded-[4px] border border-brand-gray bg-white py-1 shadow-lg">
+                {(() => {
+                  const items: { value: string; label: string }[] = [
+                    { value: "my-reports", label: "My Direct Reports" },
+                  ];
+                  if (isAdmin) items.push({ value: "all", label: "All Assessments" });
+                  for (const t of teamsWithSubTeams) {
+                    items.push({ value: `reports-of:${t.id}`, label: `Direct Reports of ${t.name}` });
+                  }
+                  for (const t of teams) {
+                    items.push({ value: t.id, label: t.name });
+                  }
+                  const toggle = (value: string, checked: boolean) => {
+                    setFilterModes((prev) => (checked ? [...prev, value] : prev.filter((v) => v !== value)));
+                  };
+                  return items.map((it) => {
+                    const checked = filterModes.includes(it.value);
+                    return (
+                      <label
+                        key={it.value}
+                        className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-primary transition hover:bg-primary/5"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => toggle(it.value, e.target.checked)}
+                          className="h-3.5 w-3.5 accent-primary"
+                        />
+                        <span className="truncate">{it.label}</span>
+                      </label>
+                    );
+                  });
+                })()}
+              </div>
+            )}
           </div>
           <label className="flex items-center gap-2 cursor-pointer pb-2">
             <input
