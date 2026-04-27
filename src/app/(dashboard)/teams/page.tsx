@@ -23,6 +23,7 @@ import {
   logLeaderChangeForTeamMembers,
   findDuplicateMember,
   propagateMemberNameChange,
+  propagateMemberTitleChange,
 } from "@/lib/team-service";
 import { getAssessmentHistory } from "@/lib/assessment-service";
 import { getCompanyUsers, updateUserRole, deactivateUser, reactivateUser, updateUserEmail } from "@/lib/user-service";
@@ -563,8 +564,9 @@ export default function TeamsPage() {
     try {
       const updates: Partial<{ name: string; role: string }> = {};
       const nameChanged = editName !== member.name;
+      const titleChanged = editTitle !== member.role;
       if (nameChanged) updates.name = editName;
-      if (editTitle !== member.role) {
+      if (titleChanged) {
         if (member.role && editTitle !== member.role) {
           await logMemberChange(companyId, memberId, "role", member.role, editTitle, profile?.uid || "", todayISO, currentFY, currentFQ);
         }
@@ -580,12 +582,13 @@ export default function TeamsPage() {
         });
       }
 
+      const appUserId = member.appUserId ?? null;
+
       // If the name changed, propagate to denormalized copies
       // (user.displayName, team.leaderName, actionPlan.memberName)
       if (nameChanged) {
         const oldName = member.name;
         const newName = editName;
-        const appUserId = member.appUserId ?? null;
         const { updatedTeamIds } = await propagateMemberNameChange(
           companyId, memberId, oldName, newName, appUserId
         );
@@ -600,6 +603,21 @@ export default function TeamsPage() {
           setUsers((prev) =>
             prev.map((u) =>
               u.uid === appUserId ? { ...u, displayName: newName } : u
+            )
+          );
+        }
+      }
+
+      // If the title changed, propagate to team.leaderTitle on any team this person leads
+      if (titleChanged) {
+        const currentName = nameChanged ? editName : member.name;
+        const { updatedTeamIds } = await propagateMemberTitleChange(
+          companyId, currentName, editTitle, appUserId
+        );
+        if (updatedTeamIds.length > 0) {
+          setTeams((prev) =>
+            prev.map((t) =>
+              updatedTeamIds.includes(t.id) ? { ...t, leaderTitle: editTitle } : t
             )
           );
         }

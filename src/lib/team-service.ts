@@ -208,6 +208,48 @@ export async function propagateMemberNameChange(
   return { updatedTeamIds };
 }
 
+/**
+ * Propagate a member title (role) change to denormalized copies on team docs:
+ * - leaderTitle on any team this person leads (matched by appUserId or by leaderName free-text)
+ *
+ * Caller is responsible for updating the teamMember doc itself (e.g. via updateTeamMember).
+ * Pass the member's current name (post-name-change if applicable) so free-text matching works.
+ */
+export async function propagateMemberTitleChange(
+  companyId: string,
+  memberName: string,
+  newTitle: string,
+  appUserId: string | null
+): Promise<{ updatedTeamIds: string[] }> {
+  const batch = writeBatch(db);
+  const updatedTeamIds: string[] = [];
+
+  if (appUserId) {
+    const byId = await getDocs(
+      query(teamsRef(companyId), where("leaderId", "==", appUserId))
+    );
+    for (const t of byId.docs) {
+      batch.update(t.ref, { leaderTitle: newTitle });
+      updatedTeamIds.push(t.id);
+    }
+  }
+
+  if (memberName) {
+    const byName = await getDocs(
+      query(teamsRef(companyId), where("leaderName", "==", memberName))
+    );
+    for (const t of byName.docs) {
+      if (updatedTeamIds.includes(t.id)) continue;
+      batch.update(t.ref, { leaderTitle: newTitle });
+      updatedTeamIds.push(t.id);
+    }
+  }
+
+  if (updatedTeamIds.length === 0) return { updatedTeamIds };
+  await batch.commit();
+  return { updatedTeamIds };
+}
+
 // --- Change History ---
 
 function changesRef(companyId: string) {
