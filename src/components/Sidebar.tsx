@@ -25,8 +25,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "My Work",
     items: [
       { label: "Dashboard", href: "/dashboard" },
-      { label: "Team Member Details", href: "/members", companyScoped: true },
-      { label: "AskMike", href: "/askmike" },
+      { label: "AskMike", href: "/askmike", superadminOnly: true, companyScoped: true },
     ],
   },
   {
