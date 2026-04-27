@@ -9,6 +9,7 @@ import {
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { Suspense } from "react";
+import PasswordInput from "@/components/PasswordInput";
 
 function AuthActionContent() {
   const searchParams = useSearchParams();
@@ -114,8 +115,7 @@ function AuthActionContent() {
                 <label className="block text-sm font-medium uppercase tracking-wider text-primary">
                   New Password
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-4 py-3 text-primary outline-none focus:border-primary"
@@ -127,8 +127,7 @@ function AuthActionContent() {
                 <label className="block text-sm font-medium uppercase tracking-wider text-primary">
                   Confirm Password
                 </label>
-                <input
-                  type="password"
+                <PasswordInput
                   value={confirmPw}
                   onChange={(e) => setConfirmPw(e.target.value)}
                   className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-4 py-3 text-primary outline-none focus:border-primary"
