@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
-import { canManageCompany, canManageTeam } from "@/lib/permissions";
+import { canManageCompany, canManageTeamInScope } from "@/lib/permissions";
+import { getSubTeamIds } from "@/lib/team-auth";
 import {
   getTeams,
   createTeam,
@@ -40,6 +41,14 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 const ASSIGNABLE_ROLES: UserRole[] = ["company_admin", "senior_leader", "leader"];
 
+/** Roles the current user is allowed to assign to others. Admins can assign anything;
+ * senior leaders can assign senior_leader/leader; leaders can only assign leader. */
+function assignableRolesFor(actorRole: UserRole): UserRole[] {
+  if (actorRole === "superadmin" || actorRole === "company_admin") return ASSIGNABLE_ROLES;
+  if (actorRole === "senior_leader") return ["senior_leader", "leader"];
+  return ["leader"];
+}
+
 /** Build a tree structure from flat teams list */
 function buildTree(teams: Team[]): Map<string | null, Team[]> {
   const tree = new Map<string | null, Team[]>();
@@ -65,6 +74,7 @@ export default function TeamsPage() {
   const todayISO = now.toISOString().split("T")[0];
 
   const [teams, setTeams] = useState<Team[]>([]);
+  const [authorizedTeamIds, setAuthorizedTeamIds] = useState<Set<string>>(new Set());
   const [members, setMembers] = useState<Record<string, TeamMember[]>>({});
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [unlinkedUsers, setUnlinkedUsers] = useState<UserProfile[]>([]);
@@ -165,14 +175,23 @@ export default function TeamsPage() {
       await ensureTopLevelTeam(companyId);
       const [teamData, userData] = await Promise.all([
         getTeams(companyId),
-        isAdmin ? getCompanyUsers(companyId) : Promise.resolve([]),
+        getCompanyUsers(companyId),
       ]);
 
-      // Non-admins only see teams they lead
-      const visibleTeams = isAdmin
-        ? teamData
-        : teamData.filter((t) => canManageTeam(profile, t.leaderId));
+      // Compute authorized team scope: admins get everything; otherwise teams the user leads
+      // plus all descendant sub-teams (recursive).
+      let authIds: Set<string>;
+      if (isAdmin) {
+        authIds = new Set(teamData.map((t) => t.id));
+      } else {
+        authIds = new Set<string>();
+        for (const t of teamData.filter((t) => t.leaderId === profile.uid)) {
+          getSubTeamIds(t.id, teamData).forEach((id) => authIds.add(id));
+        }
+      }
+      setAuthorizedTeamIds(authIds);
 
+      const visibleTeams = teamData.filter((t) => authIds.has(t.id));
       setTeams(visibleTeams);
       setUsers(userData);
 
@@ -190,7 +209,7 @@ export default function TeamsPage() {
         setUnlinkedUsers(unlinked);
       }
 
-      const topLevel = teamData.find((t) => !t.parentTeamId);
+      const topLevel = visibleTeams.find((t) => !t.parentTeamId) ?? teamData.find((t) => !t.parentTeamId);
       if (topLevel) setExpandedTeams(new Set([topLevel.id]));
     } catch (err) {
       console.error("Teams load error:", err);
@@ -705,7 +724,7 @@ export default function TeamsPage() {
     const indent = team.level ?? 0;
     const isEditingThis = editingTeamId === team.id;
     const totalMembers = teamMembers.length + leaderMembers.length;
-    const canManage = canManageTeam(profile, team.leaderId);
+    const canManage = canManageTeamInScope(profile, team.id, authorizedTeamIds);
 
     return (
       <div key={team.id} style={{ marginLeft: indent > 0 ? 20 : 0 }}>
@@ -732,13 +751,13 @@ export default function TeamsPage() {
               </span>
             </button>
 
-            {isAdmin && (
+            {canManage && (
               <button onClick={() => startEditTeam(team)}
                 className="text-xs text-primary/50 transition hover:text-primary" title="Edit team">
                 {isEditingThis ? "▲" : "✎"}
               </button>
             )}
-            {isAdmin && !isTopLevel && (
+            {canManage && !isTopLevel && (
               <button onClick={() => handleDeleteTeam(team.id)}
                 className="text-xs text-accent/50 transition hover:text-accent">
                 ✕
@@ -846,7 +865,7 @@ export default function TeamsPage() {
                               <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/50">
                                 Archived{m.archivedReason ? ` — ${m.archivedReason}` : ""}
                               </span>
-                              {isAdmin && (
+                              {canManage && (
                                 <button onClick={() => handleUnarchiveMember(m.id, team.id)}
                                   className="rounded-[4px] border border-brand-gray bg-white px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary/50 transition hover:border-primary hover:text-primary">
                                   Unarchive
@@ -884,8 +903,11 @@ export default function TeamsPage() {
                           )}
                         </div>
 
-                        {/* User management controls (admin only, for app users) */}
-                        {isAdmin && m.isAppUser && linkedUser && !isArchived && !isEditing && !isArchiving && !isChangingTeam && !isPromoting && !isInviting && (
+                        {/* User management controls (in scope, for app users) */}
+                        {canManage && m.isAppUser && linkedUser && !isArchived && !isEditing && !isArchiving && !isChangingTeam && !isPromoting && !isInviting && (() => {
+                          const allowedRoles = profile ? assignableRolesFor(profile.role) : [];
+                          const userOutranks = !allowedRoles.includes(linkedUser.role);
+                          return (
                           <div className="border-t border-brand-gray/30 bg-green-50/50">
                             {/* Email row */}
                             <div className="px-2.5 py-2 flex items-center gap-2">
@@ -927,15 +949,21 @@ export default function TeamsPage() {
                             </div>
                             {/* Role / password / deactivate row */}
                             <div className="border-t border-brand-gray/20 px-2.5 py-2 flex items-center gap-3">
-                              <select
-                                value={linkedUser.role}
-                                onChange={(e) => handleUserRoleChange(linkedUser.uid, e.target.value as UserRole)}
-                                className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary"
-                              >
-                                {ASSIGNABLE_ROLES.map((r) => (
-                                  <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                                ))}
-                              </select>
+                              {userOutranks ? (
+                                <span className="rounded-[4px] border border-brand-gray bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary/60">
+                                  {ROLE_LABELS[linkedUser.role]}
+                                </span>
+                              ) : (
+                                <select
+                                  value={linkedUser.role}
+                                  onChange={(e) => handleUserRoleChange(linkedUser.uid, e.target.value as UserRole)}
+                                  className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary"
+                                >
+                                  {allowedRoles.map((r) => (
+                                    <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                                  ))}
+                                </select>
+                              )}
                               <button onClick={() => handleResetPassword(linkedUser.email, linkedUser.displayName)}
                                 className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary">
                                 Reset Password
@@ -946,7 +974,7 @@ export default function TeamsPage() {
                                   Reactivate
                                 </button>
                               ) : (
-                                linkedUser.uid !== profile?.uid && (
+                                linkedUser.uid !== profile?.uid && !userOutranks && (
                                   <button onClick={() => handleDeactivateUser(linkedUser.uid)}
                                     className="text-[10px] text-accent/50 transition hover:text-accent">
                                     Deactivate
@@ -955,7 +983,8 @@ export default function TeamsPage() {
                               )}
                             </div>
                           </div>
-                        )}
+                          );
+                        })()}
 
                         {/* Invite as user panel */}
                         {isInviting && (
@@ -1029,7 +1058,7 @@ export default function TeamsPage() {
                             <select value={changingTeamToId} onChange={(e) => setChangingTeamToId(e.target.value)}
                               className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
                               <option value="">Select team...</option>
-                              {teams.filter((t) => t.id !== team.id).map((t) => (
+                              {teams.filter((t) => t.id !== team.id && authorizedTeamIds.has(t.id)).map((t) => (
                                 <option key={t.id} value={t.id}>{t.name}</option>
                               ))}
                             </select>
@@ -1091,7 +1120,7 @@ export default function TeamsPage() {
                                 className="rounded-[4px] border-[1.5px] border-green-600 bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-green-600 transition hover:bg-green-600 hover:text-white">
                                 Promote to Leader
                               </button>
-                              {!m.isAppUser && (
+                              {isAdmin && !m.isAppUser && (
                                 <button onClick={() => { setInvitingMemberId(m.id); setInviteEmail(""); setInviteRole("leader"); setEditingMemberId(null); }}
                                   className="rounded-[4px] border-[1.5px] border-accent bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-accent transition hover:bg-accent hover:text-white">
                                   Invite as User
@@ -1131,24 +1160,23 @@ export default function TeamsPage() {
                   {dupWarning && (
                     <p className="text-[11px] text-accent bg-accent/10 rounded-[4px] px-2 py-1">{dupWarning}</p>
                   )}
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={newMemberInvite}
-                      onChange={(e) => setNewMemberInvite(e.target.checked)}
-                      disabled={!newMemberEmail.trim()}
-                      className="h-3.5 w-3.5 accent-primary" />
-                    <span className="text-xs text-primary/60">Invite as app user</span>
-                    {!newMemberEmail.trim() && <span className="text-[10px] text-primary/30">(enter email first)</span>}
-                  </label>
-                  {newMemberInvite && isAdmin && (
+                  {isAdmin && (
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" checked={newMemberInvite}
+                        onChange={(e) => setNewMemberInvite(e.target.checked)}
+                        disabled={!newMemberEmail.trim()}
+                        className="h-3.5 w-3.5 accent-primary" />
+                      <span className="text-xs text-primary/60">Invite as app user</span>
+                      {!newMemberEmail.trim() && <span className="text-[10px] text-primary/30">(enter email first)</span>}
+                    </label>
+                  )}
+                  {isAdmin && newMemberInvite && (
                     <select value={newMemberRole} onChange={(e) => setNewMemberRole(e.target.value as UserRole)}
                       className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
                       {ASSIGNABLE_ROLES.map((r) => (
                         <option key={r} value={r}>{ROLE_LABELS[r]}</option>
                       ))}
                     </select>
-                  )}
-                  {newMemberInvite && !isAdmin && (
-                    <p className="text-[10px] text-primary/40">Will be invited as a Leader.</p>
                   )}
                   <div className="flex gap-2">
                     <button onClick={() => handleAddMember(team.id)} disabled={addingMember || !newMemberName.trim()}

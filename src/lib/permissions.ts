@@ -32,6 +32,21 @@ export function canManageTeam(profile: UserProfile | null, teamLeaderId: string)
   return profile.uid === teamLeaderId;
 }
 
+/**
+ * Can manage a specific team given a precomputed authorized scope.
+ * Admins always pass. Otherwise the team must be in the user's scope (their own teams plus
+ * all descendant sub-teams), as computed via getAuthorizedTeamIds / getSubTeamIds.
+ */
+export function canManageTeamInScope(
+  profile: UserProfile | null,
+  teamId: string,
+  authorizedTeamIds: Set<string>
+): boolean {
+  if (!profile) return false;
+  if (isAtLeast(profile.role, "company_admin")) return true;
+  return authorizedTeamIds.has(teamId);
+}
+
 /** Check if user has at least the given role */
 export function hasRole(profile: UserProfile | null, role: UserRole): boolean {
   if (!profile) return false;
