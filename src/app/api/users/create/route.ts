@@ -26,47 +26,139 @@ export async function POST(request: NextRequest) {
 
     const adminAuth = getAdminAuth();
     const adminDb = getAdminDb();
+    const trimmedEmail = email.trim();
 
-    // Generate temp password
+    // Per-company duplicate check (only for company users — superadmins live
+    // outside any company). Archived users live in /usersArchived and won't
+    // match this query, so the email is correctly free at this company.
+    if (companyId) {
+      const dupSnap = await adminDb
+        .collection("companies")
+        .doc(companyId)
+        .collection("users")
+        .where("email", "==", trimmedEmail)
+        .get();
+
+      if (!dupSnap.empty) {
+        return NextResponse.json(
+          { error: "A user with this email already exists at this company." },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Generate temp password (used only for fresh Auth accounts).
     const tempPassword =
       Math.random().toString(36).slice(2, 8) +
       Math.random().toString(36).slice(2, 4).toUpperCase() +
       "!";
 
-    // Create or reuse Firebase Auth user
     let uid: string;
+    let createdFreshAuthAccount = false;
+
     try {
       const userRecord = await adminAuth.createUser({
-        email,
+        email: trimmedEmail,
         password: tempPassword,
         displayName,
       });
       uid = userRecord.uid;
+      createdFreshAuthAccount = true;
     } catch (createErr: unknown) {
-      // If email already exists, look up the existing user and reset their password
-      if (createErr && typeof createErr === "object" && "code" in createErr && (createErr as { code: string }).code === "auth/email-already-exists") {
-        const existingUser = await adminAuth.getUserByEmail(email);
+      const code =
+        createErr && typeof createErr === "object" && "code" in createErr
+          ? (createErr as { code: string }).code
+          : "";
+      if (code === "auth/email-already-exists") {
+        // Email belongs to an existing Auth account — this is the
+        // multi-company case. Reuse the same global Auth identity and add
+        // a NEW per-company membership. Do NOT touch the existing
+        // password, displayName, or other companies' Firestore docs.
+        const existingUser = await adminAuth.getUserByEmail(trimmedEmail);
         uid = existingUser.uid;
-        await adminAuth.updateUser(uid, { password: tempPassword, displayName });
+
+        if (companyId) {
+          // Defensive: confirm /companies/{cid}/users/{uid} is empty.
+          // Should be — the per-company duplicate check above already
+          // proved no active doc holds this email at this company, but
+          // the doc could still exist with a different email field.
+          const slotSnap = await adminDb
+            .doc(`companies/${companyId}/users/${uid}`)
+            .get();
+          if (slotSnap.exists) {
+            return NextResponse.json(
+              {
+                error:
+                  "This person is already a member of this company under a different email. Update their existing record instead.",
+              },
+              { status: 409 }
+            );
+          }
+        }
       } else {
         throw createErr;
       }
     }
 
-    // Create userMapping
-    await adminDb.doc(`userMappings/${uid}`).set({
-      companyId: companyId || null,
-      role,
-    });
+    // Update userMappings: set legacy fields if absent, append membership.
+    const mappingRef = adminDb.doc(`userMappings/${uid}`);
+    const mappingSnap = await mappingRef.get();
+    const now = new Date();
+
+    if (mappingSnap.exists) {
+      const existing = mappingSnap.data() ?? {};
+      const memberships = Array.isArray(existing.memberships)
+        ? existing.memberships
+        : [];
+      const updates: Record<string, unknown> = {};
+
+      if (companyId) {
+        const filtered = memberships.filter(
+          (m: { companyId?: string }) => m.companyId !== companyId
+        );
+        updates.memberships = [
+          ...filtered,
+          { companyId, role, addedAt: now },
+        ];
+      }
+
+      // Keep legacy fields populated for back-compat. If this is a fresh
+      // mapping or the legacy companyId was cleared, point it at the new
+      // company so old reader code still works.
+      if (role === "superadmin") {
+        updates.role = "superadmin";
+        updates.isSuperadmin = true;
+      } else if (companyId && (!existing.companyId || existing.role !== role)) {
+        // Don't overwrite an existing companyId/role that points at a
+        // different active membership. Only set if currently empty.
+        if (!existing.companyId) {
+          updates.companyId = companyId;
+          updates.role = role;
+        }
+      }
+
+      await mappingRef.update(updates);
+    } else {
+      const memberships =
+        companyId && role !== "superadmin"
+          ? [{ companyId, role, addedAt: now }]
+          : [];
+      await mappingRef.set({
+        companyId: companyId || null,
+        role,
+        memberships,
+        ...(role === "superadmin" ? { isSuperadmin: true } : {}),
+      });
+    }
 
     // Create superadmin doc (no company scope)
     if (role === "superadmin") {
       await adminDb.doc(`superadmin/${uid}`).set({
         uid,
-        email,
+        email: trimmedEmail,
         displayName,
         role,
-        createdAt: new Date(),
+        createdAt: now,
       });
     }
 
@@ -74,28 +166,35 @@ export async function POST(request: NextRequest) {
     if (companyId) {
       await adminDb.doc(`companies/${companyId}/users/${uid}`).set({
         uid,
-        email,
+        email: trimmedEmail,
         displayName,
         role,
         isActive: true,
         teamIds: teamId ? [teamId] : [],
-        createdAt: new Date(),
+        createdAt: now,
       });
-
-
     }
 
-    // Generate password reset link and send welcome email
+    // Email handling:
+    //  - Fresh Auth account → send welcome email with password reset link.
+    //  - Existing Auth account (added to a new company) → skip the password
+    //    reset. The user already has working credentials; sending a reset
+    //    link would be confusing and a security footgun.
     let resetLink = "";
-    try {
-      resetLink = await adminAuth.generatePasswordResetLink(email);
-      await sendWelcomeEmail(email, displayName, resetLink);
-    } catch (emailErr) {
-      console.error("Welcome email error:", emailErr);
-      // Non-critical — user was created, return the link as fallback
+    if (createdFreshAuthAccount) {
+      try {
+        resetLink = await adminAuth.generatePasswordResetLink(trimmedEmail);
+        await sendWelcomeEmail(trimmedEmail, displayName, resetLink);
+      } catch (emailErr) {
+        console.error("Welcome email error:", emailErr);
+      }
     }
 
-    return NextResponse.json({ uid, resetLink });
+    return NextResponse.json({
+      uid,
+      resetLink,
+      reusedExistingAuth: !createdFreshAuthAccount,
+    });
   } catch (err: unknown) {
     console.error("User creation error:", err);
     const message =

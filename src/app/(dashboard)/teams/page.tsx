@@ -27,7 +27,7 @@ import {
   propagateMemberTitleChange,
 } from "@/lib/team-service";
 import { getAssessmentHistory } from "@/lib/assessment-service";
-import { getCompanyUsers, updateUserRole, deactivateUser, reactivateUser, updateUserEmail } from "@/lib/user-service";
+import { getCompanyUsers, getArchivedUsers, updateUserRole, deactivateUser, reactivateUser, updateUserEmail, type ArchivedUser } from "@/lib/user-service";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { Team, TeamMember } from "@/types/team";
@@ -78,6 +78,9 @@ export default function TeamsPage() {
   const [members, setMembers] = useState<Record<string, TeamMember[]>>({});
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [unlinkedUsers, setUnlinkedUsers] = useState<UserProfile[]>([]);
+  const [archivedUsers, setArchivedUsers] = useState<ArchivedUser[]>([]);
+  const [showArchivedUsers, setShowArchivedUsers] = useState(false);
+  const [restoringUserId, setRestoringUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -201,12 +204,23 @@ export default function TeamsPage() {
       }
       setMembers(memberMap);
 
-      // Find users with no linked teamMember record (admin only)
+      // Find users with no linked teamMember record (admin only).
+      // Archived users now live in /usersArchived and aren't returned by
+      // getCompanyUsers, so the isActive filter is just defensive.
       if (isAdmin && userData.length > 0) {
         const allMembers = Object.values(memberMap).flat();
         const linkedUserIds = new Set(allMembers.filter((m) => m.appUserId).map((m) => m.appUserId));
         const unlinked = userData.filter((u) => !linkedUserIds.has(u.uid) && (u.isActive ?? true));
         setUnlinkedUsers(unlinked);
+      }
+
+      if (isAdmin) {
+        try {
+          const archived = await getArchivedUsers(companyId);
+          setArchivedUsers(archived);
+        } catch (archiveErr) {
+          console.error("Archived users load error:", archiveErr);
+        }
       }
 
       const topLevel = visibleTeams.find((t) => !t.parentTeamId) ?? teamData.find((t) => !t.parentTeamId);
@@ -502,24 +516,58 @@ export default function TeamsPage() {
 
   async function handleDeactivateUser(userId: string) {
     if (!companyId) return;
-    if (!window.confirm("Deactivate this user? They will no longer be able to log in.")) return;
-    try {
-      await deactivateUser(companyId, userId);
-      setUsers(users.map((u) => (u.uid === userId ? { ...u, isActive: false } : u)));
-    } catch {
-      setError("Failed to deactivate user.");
+    if (
+      !window.confirm(
+        "Archive this user? They will be removed from this company and can no longer log in here. Their email will become available for a new user."
+      )
+    )
+      return;
+    const result = await deactivateUser(companyId, userId);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    setUsers(users.filter((u) => u.uid !== userId));
+    setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== userId));
+    if (isAdmin) {
+      try {
+        const archived = await getArchivedUsers(companyId);
+        setArchivedUsers(archived);
+      } catch {
+        // non-fatal
+      }
     }
   }
 
-  async function handleReactivateUser(userId: string) {
+  async function handleRestoreUser(archivedDocId: string) {
     if (!companyId) return;
+    setRestoringUserId(archivedDocId);
+    setError("");
+    const result = await reactivateUser(companyId, archivedDocId);
+    setRestoringUserId(null);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    // Reload both active and archived lists
     try {
-      await reactivateUser(companyId, userId);
-      setUsers(users.map((u) => (u.uid === userId ? { ...u, isActive: true } : u)));
+      const [updated, archived] = await Promise.all([
+        getCompanyUsers(companyId),
+        getArchivedUsers(companyId),
+      ]);
+      setUsers(updated);
+      setArchivedUsers(archived);
     } catch {
-      setError("Failed to reactivate user.");
+      // non-fatal
     }
   }
+
+  // Kept for back-compat with any callers; reactivation now goes through
+  // handleRestoreUser using the archived doc id, not the user id.
+  async function handleReactivateUser(userId: string) {
+    await handleRestoreUser(userId);
+  }
+  void handleReactivateUser;
 
   async function handleResetPassword(email: string, displayName: string) {
     try {
@@ -1339,6 +1387,61 @@ export default function TeamsPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Archived users (admin only) */}
+        {isAdmin && archivedUsers.length > 0 && (
+          <div className="mt-6 rounded-[4px] border border-brand-gray bg-white">
+            <button
+              type="button"
+              onClick={() => setShowArchivedUsers((v) => !v)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <span className="text-sm font-semibold uppercase tracking-wider text-primary/70">
+                Archived Users ({archivedUsers.length})
+              </span>
+              <span className="text-xs text-primary/40">
+                {showArchivedUsers ? "Hide" : "Show"}
+              </span>
+            </button>
+            {showArchivedUsers && (
+              <div className="space-y-2 border-t border-brand-gray/50 p-4">
+                <p className="text-xs text-primary/50">
+                  Archived users cannot log in to this company. Their email is
+                  available for use by a new user. Restore brings them back if
+                  the original email isn&apos;t already in use.
+                </p>
+                {archivedUsers.map((u) => {
+                  const restoreEmail = u.archivedEmail ?? u.email;
+                  const isRestoring = restoringUserId === u.archivedDocId;
+                  return (
+                    <div
+                      key={u.archivedDocId}
+                      className="rounded-[4px] border border-brand-gray/50 bg-primary/[0.02] p-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-primary">
+                            {u.displayName}
+                          </p>
+                          <p className="text-xs text-primary/50">
+                            {restoreEmail} · {ROLE_LABELS[u.role]}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleRestoreUser(u.archivedDocId)}
+                          disabled={isRestoring}
+                          className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white disabled:opacity-50"
+                        >
+                          {isRestoring ? "Restoring..." : "Restore"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 

@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
 
     const adminDb = getAdminDb();
 
-    // Check uniqueness: find any other user in this company with the same email
+    // Check uniqueness within this company.
     const usersSnap = await adminDb
       .collection("companies")
       .doc(companyId)
@@ -27,17 +27,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "A user with this email address already exists." }, { status: 409 });
     }
 
-    // Update Firebase Auth
-    const adminAuth = getAdminAuth();
-    await adminAuth.updateUser(userId, { email: newEmail.trim() });
-
-    // Update Firestore
+    // Update the per-company Firestore email field.
     await adminDb
       .collection("companies")
       .doc(companyId)
       .collection("users")
       .doc(userId)
       .update({ email: newEmail.trim() });
+
+    // Only update the global Firebase Auth email when this is the user's
+    // sole company. If they belong to multiple companies, changing the Auth
+    // email would silently change their login email everywhere — surprising
+    // and potentially conflicting with another company's records.
+    const mappingSnap = await adminDb.doc(`userMappings/${userId}`).get();
+    const memberships = mappingSnap.exists
+      ? (mappingSnap.data()?.memberships ?? [])
+      : [];
+    const multiCompany =
+      Array.isArray(memberships) && memberships.length > 1;
+
+    if (!multiCompany) {
+      const adminAuth = getAdminAuth();
+      await adminAuth.updateUser(userId, { email: newEmail.trim() });
+    }
 
     // Notify the user at their new address
     const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://talentdensity.app"}/login`;

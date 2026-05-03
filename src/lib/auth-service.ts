@@ -1,6 +1,10 @@
-import { doc, getDoc } from "firebase/firestore";
+import { Timestamp, doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { UserMapping, UserProfile } from "@/types/auth";
+import type {
+  CompanyMembership,
+  UserMapping,
+  UserProfile,
+} from "@/types/auth";
 
 export async function getUserMapping(uid: string): Promise<UserMapping | null> {
   const snap = await getDoc(doc(db, "userMappings", uid));
@@ -25,14 +29,63 @@ export async function getSuperadminProfile(
   return { ...snap.data(), companyId: null } as UserProfile;
 }
 
-export async function resolveUser(uid: string): Promise<UserProfile | null> {
+/**
+ * Returns all company memberships for a user, normalizing legacy mappings
+ * (single companyId/role) into the memberships[] shape.
+ */
+export async function getUserMemberships(
+  uid: string
+): Promise<CompanyMembership[]> {
+  const mapping = await getUserMapping(uid);
+  if (!mapping) return [];
+  if (mapping.memberships && mapping.memberships.length > 0) {
+    return [...mapping.memberships].sort((a, b) => {
+      const aMs = a.addedAt?.toMillis?.() ?? 0;
+      const bMs = b.addedAt?.toMillis?.() ?? 0;
+      return aMs - bMs;
+    });
+  }
+  if (mapping.companyId) {
+    return [
+      {
+        companyId: mapping.companyId,
+        role: mapping.role,
+        addedAt: Timestamp.fromMillis(0),
+      },
+    ];
+  }
+  return [];
+}
+
+/**
+ * Resolves the active UserProfile for a signed-in user.
+ *
+ * For superadmins → /superadmin/{uid}.
+ * For company users → picks the membership matching preferredCompanyId,
+ * else the earliest-added one. Returns null if the user has no memberships
+ * (fully archived) or the resolved profile is marked inactive.
+ */
+export async function resolveUser(
+  uid: string,
+  preferredCompanyId?: string
+): Promise<UserProfile | null> {
   const mapping = await getUserMapping(uid);
   if (!mapping) return null;
 
-  if (mapping.role === "superadmin") {
+  if (mapping.isSuperadmin || mapping.role === "superadmin") {
     return getSuperadminProfile(uid);
   }
 
-  if (!mapping.companyId) return null;
-  return getUserProfile(mapping.companyId, uid);
+  const memberships = await getUserMemberships(uid);
+  if (memberships.length === 0) return null;
+
+  const picked =
+    (preferredCompanyId &&
+      memberships.find((m) => m.companyId === preferredCompanyId)) ||
+    memberships[0];
+
+  const profile = await getUserProfile(picked.companyId, uid);
+  if (!profile) return null;
+  if (profile.isActive === false) return null;
+  return profile;
 }

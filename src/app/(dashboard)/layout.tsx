@@ -6,8 +6,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import LoadingScreen from "@/components/LoadingScreen";
 import Sidebar from "@/components/Sidebar";
 import InactivityWarningModal from "@/components/InactivityWarningModal";
+import CompanyPicker from "@/components/CompanyPicker";
 import { useInactivityLogout } from "@/lib/useInactivityLogout";
-import { CompanyProvider } from "@/contexts/CompanyContext";
+import { CompanyProvider, useCompany } from "@/contexts/CompanyContext";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, profile, loading, signOut } = useAuth();
@@ -87,7 +88,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex flex-1 flex-col overflow-hidden">
         <main className="flex-1 overflow-y-auto pt-14 lg:pt-0">{children}</main>
       </div>
+
+      <CompanyPickerHost />
     </div>
     </CompanyProvider>
   );
+}
+
+function CompanyPickerHost() {
+  const { needsPicker, pickerOpen } = useCompany();
+  if (!needsPicker && !pickerOpen) return null;
+  return <CompanyPicker />;
 }

@@ -22,19 +22,32 @@ export interface UserProfile {
   role: UserRole;
   companyId: string | null;
   teamIds: string[];
-  isActive?: boolean; // defaults to true; false = deactivated (soft delete)
+  isActive?: boolean; // defaults to true; false = archived (record retained)
+  archivedAt?: Timestamp;
+  archivedEmail?: string; // original email at time of archive (for Restore)
   createdAt: Timestamp;
 }
 
+export interface CompanyMembership {
+  companyId: string;
+  role: UserRole;
+  addedAt: Timestamp;
+}
+
 export interface UserMapping {
+  // Legacy fields kept for back-compat — new code should prefer memberships[]
   companyId: string | null;
   role: UserRole;
+  memberships?: CompanyMembership[];
+  isSuperadmin?: boolean;
 }
 
 export interface AuthState {
   user: import("firebase/auth").User | null;
   profile: UserProfile | null;
+  memberships: CompanyMembership[];
   loading: boolean;
   error: string | null;
   signOut: () => Promise<void>;
+  refreshProfile: (preferredCompanyId?: string) => Promise<void>;
 }

@@ -2,69 +2,134 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { onAuthStateChanged, signOut as firebaseSignOut, type User } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signOut as firebaseSignOut,
+  type User,
+} from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import { resolveUser } from "@/lib/auth-service";
-import type { UserProfile, AuthState } from "@/types/auth";
+import { getUserMemberships, resolveUser } from "@/lib/auth-service";
+import type {
+  AuthState,
+  CompanyMembership,
+  UserProfile,
+} from "@/types/auth";
+
+const ACTIVE_COMPANY_KEY = "tds-active-company";
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [memberships, setMemberships] = useState<CompanyMembership[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const signingOutRef = useRef(false);
+
+  const loadProfile = useCallback(
+    async (firebaseUser: User, preferredCompanyId?: string) => {
+      const [resolved, mems] = await Promise.all([
+        resolveUser(firebaseUser.uid, preferredCompanyId),
+        getUserMemberships(firebaseUser.uid),
+      ]);
+
+      if (!resolved) {
+        setProfile(null);
+        setMemberships([]);
+        setError("Account not provisioned. Contact your administrator.");
+        signingOutRef.current = true;
+        await firebaseSignOut(auth);
+        return;
+      }
+
+      if (resolved.isActive === false) {
+        setProfile(null);
+        setMemberships([]);
+        setError("This account has been deactivated. Contact your administrator.");
+        signingOutRef.current = true;
+        await firebaseSignOut(auth);
+        return;
+      }
+
+      setProfile(resolved);
+      setMemberships(mems);
+    },
+    []
+  );
 
   useEffect(() => {
-    let signingOut = false;
-
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
         setUser(null);
         setProfile(null);
-        if (!signingOut) setError(null);
+        setMemberships([]);
+        if (!signingOutRef.current) setError(null);
         setLoading(false);
-        signingOut = false;
+        signingOutRef.current = false;
         return;
       }
 
       setError(null);
       setUser(firebaseUser);
 
+      const preferred =
+        typeof window !== "undefined"
+          ? localStorage.getItem(ACTIVE_COMPANY_KEY) ?? undefined
+          : undefined;
+
       try {
-        const resolved = await resolveUser(firebaseUser.uid);
-        if (!resolved) {
-          setError("Account not provisioned. Contact your administrator.");
-          setProfile(null);
-          signingOut = true;
-          await firebaseSignOut(auth);
-        } else {
-          setProfile(resolved);
-        }
+        await loadProfile(firebaseUser, preferred);
       } catch {
         setError("Failed to load user profile.");
         setProfile(null);
+        setMemberships([]);
       }
 
       setLoading(false);
     });
 
     return unsubscribe;
-  }, []);
+  }, [loadProfile]);
 
   const signOut = async () => {
     await firebaseSignOut(auth);
     setUser(null);
     setProfile(null);
+    setMemberships([]);
   };
 
+  const refreshProfile = useCallback(
+    async (preferredCompanyId?: string) => {
+      if (!user) return;
+      try {
+        await loadProfile(user, preferredCompanyId);
+      } catch {
+        setError("Failed to load user profile.");
+      }
+    },
+    [user, loadProfile]
+  );
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, error, signOut }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        profile,
+        memberships,
+        loading,
+        error,
+        signOut,
+        refreshProfile,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -53,8 +53,8 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
-  const { profile, signOut } = useAuth();
-  const { activeCompany, clearActiveCompany } = useCompany();
+  const { profile, memberships, signOut } = useAuth();
+  const { activeCompany, clearActiveCompany, openPicker } = useCompany();
   const { theme, toggleTheme } = useTheme();
   const pathname = usePathname();
 
@@ -62,6 +62,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   const isSuperadmin = profile.role === "superadmin";
   const hasCompany = !!activeCompany;
+  const hasMultipleMemberships = memberships.length > 1;
 
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(href + "/");
@@ -83,7 +84,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </Link>
       </div>
 
-      {/* Active Company Indicator */}
+      {/* Active Company Indicator — superadmin (picks via /admin) */}
       {isSuperadmin && hasCompany && (
         <div className="mx-3 mb-3 rounded-[4px] bg-white/10 px-3 py-2">
           <p className="text-xs font-light uppercase tracking-wider text-white/50">
@@ -107,6 +108,25 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <p className="text-xs font-light text-white/40">
             Select a company from Admin to access company features.
           </p>
+        </div>
+      )}
+
+      {/* Active Company Indicator — non-superadmin with multi-company access */}
+      {!isSuperadmin && hasMultipleMemberships && hasCompany && (
+        <div className="mx-3 mb-3 rounded-[4px] bg-white/10 px-3 py-2">
+          <p className="text-xs font-light uppercase tracking-wider text-white/50">
+            Company
+          </p>
+          <p className="mt-0.5 truncate text-sm font-semibold text-white">
+            {activeCompany.name}
+          </p>
+          <button
+            type="button"
+            onClick={openPicker}
+            className="mt-1 inline-block text-xs text-accent transition hover:opacity-70"
+          >
+            Switch Company
+          </button>
         </div>
       )}
 
