@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
@@ -20,7 +20,6 @@ import {
   unarchiveMember,
   deleteTeamMember,
   changeTeam,
-  promoteToLeader,
   logLeaderChangeForTeamMembers,
   findDuplicateMember,
   propagateMemberNameChange,
@@ -41,21 +40,26 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 const ASSIGNABLE_ROLES: UserRole[] = ["company_admin", "senior_leader", "leader"];
 
-/** Roles the current user is allowed to assign to others. Admins can assign anything;
- * senior leaders can assign senior_leader/leader; leaders can only assign leader. */
+/** Roles the current user is allowed to assign to others.
+ * Admins (superadmin / company_admin) can assign any role.
+ * Senior Leaders and Leaders can ONLY add Leaders — granting Senior Leader is reserved for admins. */
 function assignableRolesFor(actorRole: UserRole): UserRole[] {
   if (actorRole === "superadmin" || actorRole === "company_admin") return ASSIGNABLE_ROLES;
-  if (actorRole === "senior_leader") return ["senior_leader", "leader"];
   return ["leader"];
 }
 
-/** Build a tree structure from flat teams list */
+/** Build a tree structure from flat teams list.
+ * If a team's parent isn't in the input set (e.g., the user is scoped to a
+ * sub-team and the parent leadership team is out of view), the team is
+ * treated as effectively top-level — so the renderer always has a root. */
 function buildTree(teams: Team[]): Map<string | null, Team[]> {
   const tree = new Map<string | null, Team[]>();
+  const teamIds = new Set(teams.map((t) => t.id));
   for (const t of teams) {
-    const parentId = t.parentTeamId ?? null;
-    if (!tree.has(parentId)) tree.set(parentId, []);
-    tree.get(parentId)!.push(t);
+    const effectiveParent =
+      t.parentTeamId && teamIds.has(t.parentTeamId) ? t.parentTeamId : null;
+    if (!tree.has(effectiveParent)) tree.set(effectiveParent, []);
+    tree.get(effectiveParent)!.push(t);
   }
   return tree;
 }
@@ -83,31 +87,20 @@ export default function TeamsPage() {
   const [restoringUserId, setRestoringUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [showArchived, setShowArchived] = useState(false);
 
-  // Archive modal state
-  const [archivingMemberId, setArchivingMemberId] = useState<string | null>(null);
-  const [archivingTeamId, setArchivingTeamId] = useState<string | null>(null);
+  // Archive form state (lives inside the consolidated edit panel)
   const [archiveReason, setArchiveReason] = useState("");
   const [archiveMemberHasAssessments, setArchiveMemberHasAssessments] = useState<boolean | null>(null);
-
-  // Change team modal state
-  const [changingTeamMemberId, setChangingTeamMemberId] = useState<string | null>(null);
-  const [changingTeamFromId, setChangingTeamFromId] = useState<string | null>(null);
-  const [changingTeamToId, setChangingTeamToId] = useState("");
-
-  // Promote to leader state
-  const [promotingMemberId, setPromotingMemberId] = useState<string | null>(null);
-  const [promotingTeamId, setPromotingTeamId] = useState<string | null>(null);
 
   // Expanded teams
   const [expandedTeams, setExpandedTeams] = useState<Set<string>>(new Set());
 
-  // Add sub-team form
-  const [addSubTeamParentId, setAddSubTeamParentId] = useState<string | null>(null);
+  // Add sub-team — keyed by the team member who will lead the new sub-team.
+  // The leader is auto-set to that member (their uid + name + title).
+  const [addSubTeamForMemberId, setAddSubTeamForMemberId] = useState<string | null>(null);
   const [newSubTeamName, setNewSubTeamName] = useState("");
-  const [newSubTeamLeader, setNewSubTeamLeader] = useState("");
-  const [newSubTeamLeaderTitle, setNewSubTeamLeaderTitle] = useState("");
 
   // Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -127,37 +120,58 @@ export default function TeamsPage() {
   const [newMemberRole, setNewMemberRole] = useState<UserRole>("leader");
   const [dupWarning, setDupWarning] = useState("");
   const [addingMember, setAddingMember] = useState(false);
+  // Team-to-lead selection for the Add Member invite path
+  const [newMemberLeadsMode, setNewMemberLeadsMode] = useState<"existing" | "new">("new");
+  const [newMemberLeadsExistingId, setNewMemberLeadsExistingId] = useState("");
+  const [newMemberLeadsNewName, setNewMemberLeadsNewName] = useState("");
+  const [newMemberLeadsParentId, setNewMemberLeadsParentId] = useState("");
 
-  // Edit member
-  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  // Member name/title fields (live inside the consolidated edit panel)
   const [editName, setEditName] = useState("");
   const [editTitle, setEditTitle] = useState("");
 
-  // Edit user email
-  const [editingEmailUserId, setEditingEmailUserId] = useState<string | null>(null);
+  // App-user email edit (lives inside the consolidated edit panel)
   const [editEmail, setEditEmail] = useState("");
   const [emailError, setEmailError] = useState("");
   const [emailSaving, setEmailSaving] = useState(false);
 
-  // Invite existing member as user
-  const [invitingMemberId, setInvitingMemberId] = useState<string | null>(null);
+  // Invite-as-app-user fields (lives inside the consolidated edit panel)
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<UserRole>("leader");
   const [inviting, setInviting] = useState(false);
+  const [inviteLeadsMode, setInviteLeadsMode] = useState<"existing" | "new">("new");
+  const [inviteLeadsExistingId, setInviteLeadsExistingId] = useState("");
+  const [inviteLeadsNewName, setInviteLeadsNewName] = useState("");
+  const [inviteLeadsParentId, setInviteLeadsParentId] = useState("");
 
-  // Assign unlinked user to a team
+  // Unlinked-user → assign to a team as a member
   const [assignTeamUserId, setAssignTeamUserId] = useState<string | null>(null);
   const [assignTeamId, setAssignTeamId] = useState("");
   const [assignTeamTitle, setAssignTeamTitle] = useState("");
   const [assigning, setAssigning] = useState(false);
+  // Team-to-lead picker (lives inside the consolidated edit panel)
+  const [leadAssignMode, setLeadAssignMode] = useState<"existing" | "new">("new");
+  const [leadAssignExistingId, setLeadAssignExistingId] = useState("");
+  const [leadAssignNewName, setLeadAssignNewName] = useState("");
+  const [leadAssignParentId, setLeadAssignParentId] = useState("");
+  const [leadAssigning, setLeadAssigning] = useState(false);
+
+  // Consolidated edit panel — only one row's pencil is open at a time.
+  // Panel sections (member, app user, team-they-lead, etc.) all render
+  // together inside this single panel; their field state lives in the
+  // individual edit* / invite* / leadAssign* / changeTeam* / archive* vars.
+  const [openEditPanelId, setOpenEditPanelId] = useState<string | null>(null);
+  const [moveTeamToId, setMoveTeamToId] = useState("");
+  // Unlinked-user pencil panel (separate state — keyed by uid)
+  const [openUnlinkedPanelId, setOpenUnlinkedPanelId] = useState<string | null>(null);
 
   useKeyboardShortcuts({
     onEscape: () => {
       setEditingTeamId(null);
-      setEditingMemberId(null);
+      setOpenEditPanelId(null);
+      setOpenUnlinkedPanelId(null);
       setAddMemberTeamId(null);
-      setAddSubTeamParentId(null);
-      setInvitingMemberId(null);
+      setAddSubTeamForMemberId(null);
       setAssignTeamUserId(null);
     },
   });
@@ -194,6 +208,10 @@ export default function TeamsPage() {
       }
       setAuthorizedTeamIds(authIds);
 
+      // Strict scope: non-admins see only their own teams (and descendants).
+      // The team tree's render logic treats any team whose parent isn't in
+      // the visible list as effectively top-level, so a sub-team leader
+      // sees their team as the root — no parent leadership team is exposed.
       const visibleTeams = teamData.filter((t) => authIds.has(t.id));
       setTeams(visibleTeams);
       setUsers(userData);
@@ -223,8 +241,16 @@ export default function TeamsPage() {
         }
       }
 
-      const topLevel = visibleTeams.find((t) => !t.parentTeamId) ?? teamData.find((t) => !t.parentTeamId);
-      if (topLevel) setExpandedTeams(new Set([topLevel.id]));
+      // Default expansion: every team that renders as top-level in the
+      // current scope. Admins start with the real root expanded. Non-admins
+      // get their boundary teams expanded (R&D for a sub-team leader).
+      const expandSet = new Set<string>();
+      const visibleIds = new Set(visibleTeams.map((t) => t.id));
+      const renderRoots = visibleTeams.filter(
+        (t) => !t.parentTeamId || !visibleIds.has(t.parentTeamId)
+      );
+      for (const t of renderRoots) expandSet.add(t.id);
+      setExpandedTeams(expandSet);
     } catch (err) {
       console.error("Teams load error:", err);
       setError("Failed to load teams.");
@@ -275,34 +301,39 @@ export default function TeamsPage() {
     }
   }
 
-  async function handleCreateSubTeam(parentId: string, parentLevel: number) {
+  /** Create a sub-team under a given member of a parent team. The member
+   * automatically becomes the leader of the new sub-team. If the member is
+   * an app user, leaderId is their uid; otherwise leaderId is empty and
+   * leaderName carries their name (legacy free-text leader path). */
+  async function handleCreateSubTeamForMember(parentTeam: Team, m: TeamMember) {
     if (!companyId || !newSubTeamName.trim()) return;
     try {
-      const leaderId = newSubTeamLeader || "";
+      const leaderId = m.appUserId || "";
+      const leaderName = m.name;
+      const leaderTitle = m.role || "";
       const id = await createTeam(companyId, {
         name: newSubTeamName.trim(),
         leaderId,
-        leaderName: leaderId ? (users.find((u) => u.uid === leaderId)?.displayName || "") : newSubTeamLeader.trim(),
-        leaderTitle: newSubTeamLeaderTitle.trim(),
-        parentTeamId: parentId,
-        level: parentLevel + 1,
+        leaderName,
+        leaderTitle,
+        parentTeamId: parentTeam.id,
+        level: (parentTeam.level ?? 0) + 1,
       });
-      const newTeam = {
+      const newTeam: Team = {
         id,
         name: newSubTeamName.trim(),
-        parentTeamId: parentId,
+        parentTeamId: parentTeam.id,
         leaderId,
-        leaderName: leaderId ? (users.find((u) => u.uid === leaderId)?.displayName || "") : newSubTeamLeader.trim(),
-        leaderTitle: newSubTeamLeaderTitle.trim(),
-        level: parentLevel + 1,
+        leaderName,
+        leaderTitle,
+        level: (parentTeam.level ?? 0) + 1,
       } as Team;
       setTeams([...teams, newTeam]);
+      setAuthorizedTeamIds((prev) => new Set([...Array.from(prev), id]));
       setMembers({ ...members, [id]: [] });
       setNewSubTeamName("");
-      setNewSubTeamLeader("");
-      setNewSubTeamLeaderTitle("");
-      setAddSubTeamParentId(null);
-      setExpandedTeams((prev) => new Set([...Array.from(prev), parentId]));
+      setAddSubTeamForMemberId(null);
+      setExpandedTeams((prev) => new Set([...Array.from(prev), parentTeam.id, id]));
     } catch {
       setError("Failed to create team.");
     }
@@ -324,6 +355,15 @@ export default function TeamsPage() {
     try {
       const oldTeam = teams.find((t) => t.id === teamId);
       const leaderChanged = oldTeam && oldTeam.leaderName !== editTeamLeader.trim() && oldTeam.leaderName;
+      // If the leader is being replaced (not simply set on a leaderless team),
+      // confirm before silently overwriting — the previous leader loses their
+      // team scope and their team-leader memory of this team.
+      if (leaderChanged && editTeamLeader.trim()) {
+        const ok = window.confirm(
+          `${oldTeam.name} is currently led by ${oldTeam.leaderName}. Replace ${oldTeam.leaderName} with ${editTeamLeader.trim()} as the leader?`
+        );
+        if (!ok) return;
+      }
       await updateTeam(companyId, teamId, {
         name: editTeamName.trim(),
         leaderName: editTeamLeader.trim(),
@@ -399,6 +439,43 @@ export default function TeamsPage() {
 
       // If invite checked and email provided, create the app user
       if (newMemberInvite && newMemberEmail.trim()) {
+        const effectiveRole: UserRole = isAdmin ? newMemberRole : "leader";
+        const needsLeadTeam = effectiveRole === "senior_leader" || effectiveRole === "leader";
+
+        // Validate the team-to-lead picker for leader-type roles.
+        let leadsExistingTeamId: string | undefined;
+        let leadsNewTeam: { name: string; parentTeamId: string } | undefined;
+        if (needsLeadTeam) {
+          if (newMemberLeadsMode === "existing") {
+            if (!newMemberLeadsExistingId) {
+              setError("Pick a team for this person to lead.");
+              setAddingMember(false);
+              return;
+            }
+            const targetTeam = teams.find((t) => t.id === newMemberLeadsExistingId);
+            if (targetTeam?.leaderId && targetTeam.leaderName) {
+              const ok = window.confirm(
+                `${targetTeam.name} is currently led by ${targetTeam.leaderName}. Replace ${targetTeam.leaderName} with ${newMemberName.trim()} as the leader?`
+              );
+              if (!ok) {
+                setAddingMember(false);
+                return;
+              }
+            }
+            leadsExistingTeamId = newMemberLeadsExistingId;
+          } else {
+            if (!newMemberLeadsNewName.trim() || !newMemberLeadsParentId) {
+              setError("Enter a name and pick a parent team for the new team.");
+              setAddingMember(false);
+              return;
+            }
+            leadsNewTeam = {
+              name: newMemberLeadsNewName.trim(),
+              parentTeamId: newMemberLeadsParentId,
+            };
+          }
+        }
+
         try {
           const res = await fetch("/api/users/create", {
             method: "POST",
@@ -407,9 +484,11 @@ export default function TeamsPage() {
               companyId,
               email: newMemberEmail.trim(),
               displayName: newMemberName.trim(),
-              role: isAdmin ? newMemberRole : "leader",
+              role: effectiveRole,
               title: newMemberTitle.trim(),
               teamId,
+              leadsExistingTeamId,
+              leadsNewTeam,
             }),
           });
           const data = await res.json();
@@ -425,8 +504,32 @@ export default function TeamsPage() {
               // Remove from unlinked
               setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== data.uid));
             }
+            // If a team was created or a leader changed, refresh teams.
+            if (data.ledTeamId) {
+              const refreshedTeams = await getTeams(companyId);
+              const visible = isAdmin
+                ? refreshedTeams
+                : refreshedTeams.filter((t) => authorizedTeamIds.has(t.id) || t.leaderId === profile?.uid || t.id === data.ledTeamId);
+              setTeams(visible);
+              if (data.ledTeamId && !authorizedTeamIds.has(data.ledTeamId)) {
+                setAuthorizedTeamIds(new Set([...Array.from(authorizedTeamIds), data.ledTeamId]));
+              }
+            }
+            if (data.reusedExistingAuth) {
+              setNotice(
+                `${newMemberName.trim()} was added to this company. They already had a login from another company, so no welcome email was sent — they'll use their existing password.`
+              );
+            } else if (data.emailSent === false) {
+              setNotice(
+                `${newMemberName.trim()} was created, but the welcome email failed to send${
+                  data.emailError ? ` (${data.emailError})` : ""
+                }. Tell them manually or use Reset Password to retry.`
+              );
+            }
           } else {
             setError(data.error || "Member added but invite failed.");
+            setAddingMember(false);
+            return;
           }
         } catch {
           setError("Member added but invite email failed.");
@@ -454,6 +557,10 @@ export default function TeamsPage() {
       setNewMemberRole("leader");
       setDupWarning("");
       setAddMemberTeamId(null);
+      setNewMemberLeadsMode("new");
+      setNewMemberLeadsExistingId("");
+      setNewMemberLeadsNewName("");
+      setNewMemberLeadsParentId("");
     } catch {
       setError("Failed to add team member.");
     }
@@ -464,6 +571,38 @@ export default function TeamsPage() {
     if (!companyId || !inviteEmail.trim()) return;
     const member = members[teamId]?.find((m) => m.id === memberId);
     if (!member) return;
+
+    const effectiveRole: UserRole = isAdmin ? inviteRole : "leader";
+    const needsLeadTeam = effectiveRole === "senior_leader" || effectiveRole === "leader";
+
+    let leadsExistingTeamId: string | undefined;
+    let leadsNewTeam: { name: string; parentTeamId: string } | undefined;
+    if (needsLeadTeam) {
+      if (inviteLeadsMode === "existing") {
+        if (!inviteLeadsExistingId) {
+          setError("Pick a team for this person to lead.");
+          return;
+        }
+        const targetTeam = teams.find((t) => t.id === inviteLeadsExistingId);
+        if (targetTeam?.leaderId && targetTeam.leaderName) {
+          const ok = window.confirm(
+            `${targetTeam.name} is currently led by ${targetTeam.leaderName}. Replace ${targetTeam.leaderName} with ${member.name} as the leader?`
+          );
+          if (!ok) return;
+        }
+        leadsExistingTeamId = inviteLeadsExistingId;
+      } else {
+        if (!inviteLeadsNewName.trim() || !inviteLeadsParentId) {
+          setError("Enter a name and pick a parent team for the new team.");
+          return;
+        }
+        leadsNewTeam = {
+          name: inviteLeadsNewName.trim(),
+          parentTeamId: inviteLeadsParentId,
+        };
+      }
+    }
+
     setInviting(true);
     try {
       const res = await fetch("/api/users/create", {
@@ -473,9 +612,11 @@ export default function TeamsPage() {
           companyId,
           email: inviteEmail.trim(),
           displayName: member.name,
-          role: isAdmin ? inviteRole : "leader",
+          role: effectiveRole,
           title: member.role,
           teamId,
+          leadsExistingTeamId,
+          leadsNewTeam,
         }),
       });
       const data = await res.json();
@@ -492,9 +633,33 @@ export default function TeamsPage() {
           setUsers(updated);
           setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== data.uid));
         }
-        setInvitingMemberId(null);
+        if (data.ledTeamId) {
+          const refreshedTeams = await getTeams(companyId);
+          const visible = isAdmin
+            ? refreshedTeams
+            : refreshedTeams.filter((t) => authorizedTeamIds.has(t.id) || t.leaderId === profile?.uid || t.id === data.ledTeamId);
+          setTeams(visible);
+          if (data.ledTeamId && !authorizedTeamIds.has(data.ledTeamId)) {
+            setAuthorizedTeamIds(new Set([...Array.from(authorizedTeamIds), data.ledTeamId]));
+          }
+        }
         setInviteEmail("");
         setInviteRole("leader");
+        setInviteLeadsMode("new");
+        setInviteLeadsExistingId("");
+        setInviteLeadsNewName("");
+        setInviteLeadsParentId("");
+        if (data.reusedExistingAuth) {
+          setNotice(
+            `${member.name} was added to this company. They already had a login from another company, so no welcome email was sent — they'll use their existing password.`
+          );
+        } else if (data.emailSent === false) {
+          setNotice(
+            `${member.name} was invited, but the welcome email failed to send${
+              data.emailError ? ` (${data.emailError})` : ""
+            }. Tell them manually or use Reset Password to retry.`
+          );
+        }
       } else {
         setError(data.error || "Invite failed.");
       }
@@ -592,7 +757,6 @@ export default function TeamsPage() {
       setEmailError(result.error);
     } else {
       setUsers(users.map((u) => (u.uid === userId ? { ...u, email: editEmail.trim() } : u)));
-      setEditingEmailUserId(null);
     }
     setEmailSaving(false);
   }
@@ -622,6 +786,71 @@ export default function TeamsPage() {
       setError("Failed to assign user to team.");
     }
     setAssigning(false);
+  }
+
+  async function handleAssignLeadTeam(userId: string, userDisplayName: string) {
+    if (!companyId) return;
+    let leadsExistingTeamId: string | undefined;
+    let leadsNewTeam: { name: string; parentTeamId: string } | undefined;
+    if (leadAssignMode === "existing") {
+      if (!leadAssignExistingId) {
+        setError("Pick a team for this person to lead.");
+        return;
+      }
+      const targetTeam = teams.find((t) => t.id === leadAssignExistingId);
+      if (targetTeam?.leaderId && targetTeam.leaderId !== userId && targetTeam.leaderName) {
+        const ok = window.confirm(
+          `${targetTeam.name} is currently led by ${targetTeam.leaderName}. Replace ${targetTeam.leaderName} with ${userDisplayName} as the leader?`
+        );
+        if (!ok) return;
+      }
+      leadsExistingTeamId = leadAssignExistingId;
+    } else {
+      if (!leadAssignNewName.trim() || !leadAssignParentId) {
+        setError("Enter a name and pick a parent team for the new team.");
+        return;
+      }
+      leadsNewTeam = {
+        name: leadAssignNewName.trim(),
+        parentTeamId: leadAssignParentId,
+      };
+    }
+
+    setLeadAssigning(true);
+    setError("");
+    try {
+      const res = await fetch("/api/users/assign-team", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          userId,
+          leadsExistingTeamId,
+          leadsNewTeam,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to assign team.");
+      } else {
+        const refreshedTeams = await getTeams(companyId);
+        const visible = isAdmin
+          ? refreshedTeams
+          : refreshedTeams.filter((t) => authorizedTeamIds.has(t.id) || t.leaderId === profile?.uid || t.id === data.ledTeamId);
+        setTeams(visible);
+        if (data.ledTeamId && !authorizedTeamIds.has(data.ledTeamId)) {
+          setAuthorizedTeamIds(new Set([...Array.from(authorizedTeamIds), data.ledTeamId]));
+        }
+        setLeadAssignMode("new");
+        setLeadAssignExistingId("");
+        setLeadAssignNewName("");
+        setLeadAssignParentId("");
+        setNotice(`${userDisplayName} now leads ${leadsNewTeam ? leadsNewTeam.name : (teams.find((t) => t.id === leadsExistingTeamId)?.name ?? "the selected team")}.`);
+      }
+    } catch {
+      setError("Failed to assign team.");
+    }
+    setLeadAssigning(false);
   }
 
   async function handleSaveMember(memberId: string, teamId: string) {
@@ -690,23 +919,85 @@ export default function TeamsPage() {
         }
       }
 
-      setEditingMemberId(null);
+      closeMemberPanel();
     } catch {
       setError("Failed to update member.");
     }
   }
 
-  async function handleArchiveMember() {
-    if (!companyId || !archivingMemberId || !archivingTeamId) return;
+  /** Open the consolidated edit panel for a member, prefilling all section
+   * fields and resetting any draft state from a previously-open panel. */
+  function openMemberPanel(m: TeamMember, teamId: string) {
+    setOpenUnlinkedPanelId(null); // one panel at a time across both sections
+    setOpenEditPanelId(m.id);
+    // Member section
+    setEditName(m.name);
+    setEditTitle(m.role);
+    // Move-to-team section
+    setMoveTeamToId("");
+    // App user → invite path defaults
+    setInviteEmail("");
+    setInviteRole("leader");
+    setInviteLeadsMode("new");
+    setInviteLeadsExistingId("");
+    setInviteLeadsNewName("");
+    setInviteLeadsParentId(teamId);
+    // App user → email edit defaults (only used when linkedUser exists)
+    const linkedUser = m.isAppUser && m.appUserId ? users.find((u) => u.uid === m.appUserId) : null;
+    setEditEmail(linkedUser?.email ?? "");
+    setEmailError("");
+    // App user → team-to-lead picker defaults
+    const ledTeam = linkedUser ? teams.find((t) => t.leaderId === linkedUser.uid) : null;
+    setLeadAssignMode("new");
+    setLeadAssignExistingId("");
+    setLeadAssignNewName("");
+    setLeadAssignParentId(ledTeam ? (ledTeam.parentTeamId ?? teamId) : teamId);
+    // Archive section
+    setArchiveReason("");
+    setArchiveMemberHasAssessments(null);
+    if (companyId) {
+      getAssessmentHistory(companyId, m.id)
+        .then((a) => setArchiveMemberHasAssessments(a.length > 0))
+        .catch(() => setArchiveMemberHasAssessments(false));
+    }
+  }
+
+  function closeMemberPanel() {
+    setOpenEditPanelId(null);
+    setEmailError("");
+  }
+
+  /** Open the consolidated edit panel for an unlinked user (admin only). */
+  function openUnlinkedPanel(u: UserProfile) {
+    setOpenEditPanelId(null); // one panel at a time
+    setOpenUnlinkedPanelId(u.uid);
+    setEditEmail(u.email);
+    setEmailError("");
+    setAssignTeamId("");
+    setAssignTeamTitle("");
+    // Team-to-lead picker defaults
+    const ledTeam = teams.find((t) => t.leaderId === u.uid);
+    setLeadAssignMode("new");
+    setLeadAssignExistingId("");
+    setLeadAssignNewName("");
+    setLeadAssignParentId(ledTeam ? (ledTeam.parentTeamId ?? "") : "");
+  }
+
+  function closeUnlinkedPanel() {
+    setOpenUnlinkedPanelId(null);
+    setEmailError("");
+  }
+
+  async function handleArchiveMember(memberId: string, teamId: string, reason: string) {
+    if (!companyId) return;
     try {
-      await archiveMember(companyId, archivingMemberId, archiveReason || "Left company", profile?.uid || "", todayISO, currentFY, currentFQ);
+      await archiveMember(companyId, memberId, reason || "Left company", profile?.uid || "", todayISO, currentFY, currentFQ);
       setMembers({
         ...members,
-        [archivingTeamId]: members[archivingTeamId].map((m) =>
-          m.id === archivingMemberId ? { ...m, status: "archived" as const, archivedReason: archiveReason || "Left company" } : m
+        [teamId]: members[teamId].map((m) =>
+          m.id === memberId ? { ...m, status: "archived" as const, archivedReason: reason || "Left company" } : m
         ),
       });
-      setArchivingMemberId(null); setArchivingTeamId(null); setArchiveReason("");
     } catch { setError("Failed to archive member."); }
   }
 
@@ -718,46 +1009,31 @@ export default function TeamsPage() {
     } catch { setError("Failed to unarchive member."); }
   }
 
-  async function handleDeleteMember() {
-    if (!companyId || !archivingMemberId || !archivingTeamId) return;
+  async function handleDeleteMember(memberId: string, teamId: string) {
+    if (!companyId) return;
     if (!window.confirm("Permanently delete this team member? This cannot be undone.")) return;
     try {
-      await deleteTeamMember(companyId, archivingMemberId);
-      setMembers({ ...members, [archivingTeamId]: members[archivingTeamId].filter((m) => m.id !== archivingMemberId) });
-      setArchivingMemberId(null); setArchivingTeamId(null); setArchiveReason("");
+      await deleteTeamMember(companyId, memberId);
+      setMembers({ ...members, [teamId]: members[teamId].filter((m) => m.id !== memberId) });
     } catch { setError("Failed to delete member."); }
   }
 
-  async function handleChangeTeam() {
-    if (!companyId || !changingTeamMemberId || !changingTeamFromId || !changingTeamToId) return;
-    const member = members[changingTeamFromId]?.find((m) => m.id === changingTeamMemberId);
+  async function handleChangeTeam(memberId: string, fromTeamId: string, toTeamId: string) {
+    if (!companyId || !memberId || !fromTeamId || !toTeamId) return;
+    const member = members[fromTeamId]?.find((m) => m.id === memberId);
     if (!member) return;
-    const fromTeam = teams.find((t) => t.id === changingTeamFromId);
-    const toTeam = teams.find((t) => t.id === changingTeamToId);
+    const fromTeam = teams.find((t) => t.id === fromTeamId);
+    const toTeam = teams.find((t) => t.id === toTeamId);
     if (!toTeam) return;
     try {
-      await changeTeam(companyId, changingTeamMemberId, fromTeam?.name || "", changingTeamToId, toTeam.name, toTeam.leaderId || "", profile?.uid || "", todayISO, currentFY, currentFQ);
-      const updatedMember = { ...member, teamId: changingTeamToId, reportsToUserId: toTeam.leaderId || "" };
+      await changeTeam(companyId, memberId, fromTeam?.name || "", toTeamId, toTeam.name, toTeam.leaderId || "", profile?.uid || "", todayISO, currentFY, currentFQ);
+      const updatedMember = { ...member, teamId: toTeamId, reportsToUserId: toTeam.leaderId || "" };
       setMembers({
         ...members,
-        [changingTeamFromId]: members[changingTeamFromId].filter((m) => m.id !== changingTeamMemberId),
-        [changingTeamToId]: [...(members[changingTeamToId] || []), updatedMember],
+        [fromTeamId]: members[fromTeamId].filter((m) => m.id !== memberId),
+        [toTeamId]: [...(members[toTeamId] || []), updatedMember],
       });
-      setChangingTeamMemberId(null); setChangingTeamFromId(null); setChangingTeamToId("");
     } catch { setError("Failed to change team."); }
-  }
-
-  async function handlePromoteToLeader() {
-    if (!companyId || !promotingMemberId || !promotingTeamId) return;
-    const member = members[promotingTeamId]?.find((m) => m.id === promotingMemberId);
-    const team = teams.find((t) => t.id === promotingTeamId);
-    if (!member || !team) return;
-    try {
-      await promoteToLeader(companyId, promotingMemberId, member.name, member.role, promotingTeamId, team.leaderId, team.leaderName, profile?.uid || "", todayISO, currentFY, currentFQ);
-      await logLeaderChangeForTeamMembers(companyId, promotingTeamId, team.leaderName, member.name, profile?.uid || "", todayISO, currentFY, currentFQ);
-      setTeams(teams.map((t) => t.id === promotingTeamId ? { ...t, leaderId: promotingMemberId, leaderName: member.name, leaderTitle: member.role } : t));
-      setPromotingMemberId(null); setPromotingTeamId(null);
-    } catch { setError("Failed to promote member."); }
   }
 
   const tree = buildTree(teams);
@@ -770,12 +1046,36 @@ export default function TeamsPage() {
     const leaderMembers = getLeadersAsMembers(team.id);
     const isTopLevel = !team.parentTeamId;
     const indent = team.level ?? 0;
+    // Cap visual indentation at 4 levels deep — beyond that, the page gets
+    // visually crowded but we still nest logically.
+    const visualIndent = Math.min(indent, 4);
     const isEditingThis = editingTeamId === team.id;
     const totalMembers = teamMembers.length + leaderMembers.length;
     const canManage = canManageTeamInScope(profile, team.id, authorizedTeamIds);
 
+    // Map each child team to the parent-team member who leads it (if any).
+    // Prefer leaderId (app-user uid); fall back to leaderName (free-text).
+    const ledByMemberId = new Map<string, Team[]>();
+    const matchedChildIds = new Set<string>();
+    for (const ct of childTeams) {
+      let matched: TeamMember | undefined;
+      if (ct.leaderId) {
+        matched = teamMembers.find((m) => m.appUserId === ct.leaderId);
+      }
+      if (!matched && ct.leaderName) {
+        matched = teamMembers.find((m) => m.name === ct.leaderName);
+      }
+      if (matched) {
+        const arr = ledByMemberId.get(matched.id) ?? [];
+        arr.push(ct);
+        ledByMemberId.set(matched.id, arr);
+        matchedChildIds.add(ct.id);
+      }
+    }
+    const orphanChildTeams = childTeams.filter((ct) => !matchedChildIds.has(ct.id));
+
     return (
-      <div key={team.id} style={{ marginLeft: indent > 0 ? 20 : 0 }}>
+      <div key={team.id} style={{ marginLeft: visualIndent > 0 ? 20 : 0 }}>
         <div className="rounded-[4px] border border-brand-gray bg-white shadow-sm">
           {/* Team header */}
           <div className="flex items-center gap-3 p-4">
@@ -867,9 +1167,11 @@ export default function TeamsPage() {
           {/* Expanded content */}
           {isExpanded && !isEditingThis && (
             <div className="border-t border-brand-gray px-4 pb-4 pt-3">
-              {/* Sub-team leaders shown as members of this team */}
+              {/* Synthetic leader-of-sub-team rows (people who lead a sub-team
+                  but aren't a regular team-member of this team). Display only —
+                  these are rare edge cases and aren't part of the editable list. */}
               {leaderMembers.length > 0 && (
-                <div className="space-y-1">
+                <div className="space-y-1 mb-1">
                   {leaderMembers.map((lm, i) => (
                     <div key={`leader-${i}`} className="flex items-center gap-3 rounded-[4px] border border-brand-gray/50 bg-primary/[0.02] p-2.5">
                       <div className="flex-1">
@@ -884,44 +1186,40 @@ export default function TeamsPage() {
                 </div>
               )}
 
-              {/* Regular team members */}
+              {/* Team members — one compact row each. Click ✎ to open
+                  the consolidated edit panel for that person. */}
               {teamMembers.length > 0 && (
                 <div className={`space-y-1 ${leaderMembers.length > 0 ? "mt-1" : ""}`}>
-                  {teamMembers.map((m) => {
-                    const isEditing = editingMemberId === m.id;
+                  {[...teamMembers].sort((a, b) => a.name.localeCompare(b.name)).map((m) => {
+                    const isPanelOpen = openEditPanelId === m.id;
                     const isArchived = m.status === "archived";
-                    const leadsTeams = childTeams.filter((ct) => ct.leaderName === m.name);
-                    const isArchiving = archivingMemberId === m.id;
-                    const isChangingTeam = changingTeamMemberId === m.id;
-                    const isPromoting = promotingMemberId === m.id;
-                    const isInviting = invitingMemberId === m.id;
-                    // Find linked user for user management controls
+                    const leadsTeams = teams.filter((t) => t.leaderId && m.appUserId && t.leaderId === m.appUserId);
+                    // Fallback for non-app-user leadership references (legacy data).
+                    const leadsByName = childTeams.filter((ct) => ct.leaderName === m.name);
+                    const allLeads = leadsTeams.length > 0 ? leadsTeams : leadsByName;
                     const linkedUser = m.isAppUser && m.appUserId ? users.find((u) => u.uid === m.appUserId) : null;
                     const userIsInactive = linkedUser?.isActive === false;
+                    const allowedRoles = profile ? assignableRolesFor(profile.role) : ["leader" as UserRole];
+                    const userOutranks = linkedUser ? !allowedRoles.includes(linkedUser.role) : false;
+                    const isSelf = linkedUser?.uid === profile?.uid;
 
                     return (
-                      <div key={m.id} className={`rounded-[4px] border border-brand-gray/50 ${isArchived ? "bg-primary/[0.03] opacity-60" : "bg-white"}`}>
+                      <Fragment key={m.id}>
+                      <div className={`rounded-[4px] border border-brand-gray/50 ${isArchived ? "bg-primary/[0.03] opacity-60" : "bg-white"}`}>
+                        {/* Compact one-line row */}
                         <div className="flex items-center gap-3 p-2.5">
-                          <div className="flex-1">
+                          <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap">
                             <button onClick={() => router.push(`/members/${m.id}`)} className={`text-sm font-semibold transition hover:text-accent ${isArchived ? "text-primary/50" : "text-primary"}`}>
                               {m.name}
                             </button>
-                            {m.role && <span className="ml-2 text-xs text-primary/50">{m.role}</span>}
+                            {m.role && <span className="text-xs text-primary/50">{m.role}</span>}
                           </div>
                           {isArchived && (
-                            <>
-                              <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/50">
-                                Archived{m.archivedReason ? ` — ${m.archivedReason}` : ""}
-                              </span>
-                              {canManage && (
-                                <button onClick={() => handleUnarchiveMember(m.id, team.id)}
-                                  className="rounded-[4px] border border-brand-gray bg-white px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary/50 transition hover:border-primary hover:text-primary">
-                                  Unarchive
-                                </button>
-                              )}
-                            </>
+                            <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/50">
+                              Archived{m.archivedReason ? ` — ${m.archivedReason}` : ""}
+                            </span>
                           )}
-                          {leadsTeams.map((lt) => (
+                          {allLeads.map((lt) => (
                             <span key={lt.id} className="rounded-[2px] bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-blue-700">
                               Leads {lt.name}
                             </span>
@@ -931,253 +1229,352 @@ export default function TeamsPage() {
                               {userIsInactive ? "User (Inactive)" : "User"}
                             </span>
                           )}
-                          {!isArchived && (
-                            <>
-                              <button onClick={() => {
-                                if (isEditing) { setEditingMemberId(null); }
-                                else { setEditingMemberId(m.id); setEditName(m.name); setEditTitle(m.role); }
-                              }}
-                                className="text-xs text-primary/50 transition hover:text-primary" title="Edit">
-                                {isEditing ? "▲" : "✎"}
-                              </button>
-                              <button onClick={() => {
-                                setArchivingMemberId(m.id); setArchivingTeamId(team.id); setArchiveReason("");
-                                setArchiveMemberHasAssessments(null);
-                                if (companyId) getAssessmentHistory(companyId, m.id).then((a) => setArchiveMemberHasAssessments(a.length > 0));
-                              }} className="text-xs text-red-500 transition hover:text-red-700" title="Archive member">
-                                ✕
-                              </button>
-                            </>
+                          {canManage && (
+                            <button onClick={() => isPanelOpen ? closeMemberPanel() : openMemberPanel(m, team.id)}
+                              className="text-xs text-primary/50 transition hover:text-primary" title="Edit">
+                              {isPanelOpen ? "▲" : "✎"}
+                            </button>
                           )}
                         </div>
 
-                        {/* User management controls (in scope, for app users) */}
-                        {canManage && m.isAppUser && linkedUser && !isArchived && !isEditing && !isArchiving && !isChangingTeam && !isPromoting && !isInviting && (() => {
-                          const allowedRoles = profile ? assignableRolesFor(profile.role) : [];
-                          const userOutranks = !allowedRoles.includes(linkedUser.role);
-                          return (
-                          <div className="border-t border-brand-gray/30 bg-green-50/50">
-                            {/* Email row */}
-                            <div className="px-2.5 py-2 flex items-center gap-2">
-                              <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Email</span>
-                              {editingEmailUserId === linkedUser.uid ? (
-                                <div className="flex flex-1 flex-col gap-1">
-                                  <div className="flex items-center gap-2">
-                                    <input
-                                      type="email"
-                                      value={editEmail}
-                                      onChange={(e) => setEditEmail(e.target.value)}
-                                      className="flex-1 rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] text-primary outline-none focus:border-primary"
-                                    />
-                                    <button
-                                      onClick={() => handleUpdateEmail(linkedUser.uid, linkedUser.displayName)}
-                                      disabled={emailSaving}
-                                      className="rounded-[4px] bg-primary px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-                                      {emailSaving ? "Saving..." : "Save"}
-                                    </button>
-                                    <button
-                                      onClick={() => { setEditingEmailUserId(null); setEmailError(""); }}
-                                      className="text-[10px] text-primary/40 transition hover:text-primary">
-                                      Cancel
-                                    </button>
+                        {/* Consolidated edit panel — opens when ✎ is clicked */}
+                        {isPanelOpen && (
+                          <div className="border-t border-brand-gray/50 divide-y divide-brand-gray/20 bg-primary/[0.02]">
+                            {/* Member section */}
+                            {!isArchived && (
+                              <div className="p-3 space-y-2">
+                                <p className="text-xs font-bold uppercase tracking-wider text-primary/80">Member</p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="text-[10px] uppercase tracking-wider text-primary/40">Name</label>
+                                    <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
+                                      className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                                   </div>
-                                  {emailError && <p className="text-[10px] text-accent">{emailError}</p>}
+                                  <div>
+                                    <label className="text-[10px] uppercase tracking-wider text-primary/40">Title</label>
+                                    <input type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)}
+                                      className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                                  </div>
                                 </div>
-                              ) : (
-                                <>
-                                  <span className="text-[10px] text-primary/70">{linkedUser.email}</span>
-                                  <button
-                                    onClick={() => { setEditingEmailUserId(linkedUser.uid); setEditEmail(linkedUser.email); setEmailError(""); }}
-                                    className="text-[10px] text-primary/40 transition hover:text-primary"
-                                    title="Edit email">
-                                    ✎
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                            {/* Role / password / deactivate row */}
-                            <div className="border-t border-brand-gray/20 px-2.5 py-2 flex items-center gap-3">
-                              {userOutranks ? (
-                                <span className="rounded-[4px] border border-brand-gray bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary/60">
-                                  {ROLE_LABELS[linkedUser.role]}
-                                </span>
-                              ) : (
-                                <select
-                                  value={linkedUser.role}
-                                  onChange={(e) => handleUserRoleChange(linkedUser.uid, e.target.value as UserRole)}
-                                  className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary"
-                                >
-                                  {allowedRoles.map((r) => (
-                                    <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                                  ))}
-                                </select>
-                              )}
-                              <button onClick={() => handleResetPassword(linkedUser.email, linkedUser.displayName)}
-                                className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary">
-                                Reset Password
-                              </button>
-                              {userIsInactive ? (
-                                <button onClick={() => handleReactivateUser(linkedUser.uid)}
-                                  className="rounded-[4px] border border-primary bg-transparent px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                                  Reactivate
-                                </button>
-                              ) : (
-                                linkedUser.uid !== profile?.uid && !userOutranks && (
-                                  <button onClick={() => handleDeactivateUser(linkedUser.uid)}
-                                    className="text-[10px] text-accent/50 transition hover:text-accent">
-                                    Deactivate
-                                  </button>
-                                )
-                              )}
-                            </div>
-                          </div>
-                          );
-                        })()}
-
-                        {/* Invite as user panel */}
-                        {isInviting && (
-                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
-                            <p className="text-xs font-semibold text-primary/60">Invite {m.name} as an app user</p>
-                            <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
-                              placeholder="Email address"
-                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                            {isAdmin && (
-                              <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as UserRole)}
-                                className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
-                                {ASSIGNABLE_ROLES.map((r) => (
-                                  <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                                ))}
-                              </select>
-                            )}
-                            <div className="flex gap-2">
-                              <button onClick={() => handleInviteMember(m.id, team.id)} disabled={inviting || !inviteEmail.trim()}
-                                className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-                                {inviting ? "Sending..." : "Send Invite"}
-                              </button>
-                              <button onClick={() => { setInvitingMemberId(null); setInviteEmail(""); setInviteRole("leader"); }}
-                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Archive confirmation */}
-                        {isArchiving && (
-                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
-                            {archiveMemberHasAssessments === null ? (
-                              <p className="text-[10px] text-primary/40 animate-pulse">Checking assessment history...</p>
-                            ) : (
-                              <>
-                                <p className="text-xs font-semibold text-primary/60">Archive {m.name}?</p>
-                                {archiveMemberHasAssessments ? (
-                                  <p className="text-[10px] text-primary/40">Their assessment history will be preserved for TDI reporting.</p>
-                                ) : (
-                                  <p className="text-[10px] text-primary/40">No assessments found — you can archive this member to preserve their record, or permanently delete if they were entered in error.</p>
-                                )}
-                                <input type="text" value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
-                                  placeholder="Reason (e.g., Left company, Terminated)"
-                                  className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                                 <div className="flex gap-2">
-                                  <button onClick={handleArchiveMember}
-                                    className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
-                                    Archive
+                                  <button onClick={() => handleSaveMember(m.id, team.id)}
+                                    className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
+                                    Save
                                   </button>
-                                  {!archiveMemberHasAssessments && (
-                                    <button onClick={handleDeleteMember}
-                                      className="rounded-[4px] border-[1.5px] border-accent bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-accent transition hover:bg-accent hover:text-white">
-                                      Delete
-                                    </button>
-                                  )}
-                                  <button onClick={() => { setArchivingMemberId(null); setArchivingTeamId(null); }}
+                                  <button onClick={() => { setEditName(m.name); setEditTitle(m.role); }}
                                     className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
                                     Cancel
                                   </button>
                                 </div>
-                              </>
+                              </div>
+                            )}
+
+                            {/* Move to a different team */}
+                            {!isArchived && teams.filter((t) => t.id !== team.id && authorizedTeamIds.has(t.id)).length > 0 && (
+                              <div className="p-3 space-y-2">
+                                <p className="text-xs font-bold uppercase tracking-wider text-primary/80">Move to a different team</p>
+                                <p className="text-[10px] text-primary/50">Currently: <span className="font-semibold text-primary/70">{team.name}</span></p>
+                                <select value={moveTeamToId} onChange={(e) => setMoveTeamToId(e.target.value)}
+                                  className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                                  <option value="">Select team…</option>
+                                  {teams.filter((t) => t.id !== team.id && authorizedTeamIds.has(t.id)).map((t) => (
+                                    <option key={t.id} value={t.id}>{t.name}</option>
+                                  ))}
+                                </select>
+                                <div className="flex gap-2">
+                                  <button onClick={() => { if (moveTeamToId) { handleChangeTeam(m.id, team.id, moveTeamToId); setMoveTeamToId(""); } }}
+                                    disabled={!moveTeamToId}
+                                    className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                    Save Move
+                                  </button>
+                                  <button onClick={() => setMoveTeamToId("")}
+                                    className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* App user section */}
+                            <div className="p-3 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-xs font-bold uppercase tracking-wider text-primary/80">App user</p>
+                                <p className="text-[10px] text-primary/50">
+                                  Status: {linkedUser ? (userIsInactive ? "User · Inactive" : "User · Active") : "Not invited"}
+                                </p>
+                              </div>
+                              {linkedUser ? (
+                                <>
+                                  <div className="space-y-1">
+                                    <label className="text-[10px] uppercase tracking-wider text-primary/40">Email</label>
+                                    <div className="flex items-center gap-2">
+                                      <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
+                                        className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                                      <button onClick={() => handleUpdateEmail(linkedUser.uid, linkedUser.displayName)}
+                                        disabled={emailSaving}
+                                        className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                        {emailSaving ? "Saving…" : "Save Email"}
+                                      </button>
+                                      <button onClick={() => { setEditEmail(linkedUser.email); setEmailError(""); }}
+                                        className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                        Cancel
+                                      </button>
+                                    </div>
+                                    {emailError && <p className="text-[10px] text-accent">{emailError}</p>}
+                                  </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <label className="text-[10px] uppercase tracking-wider text-primary/40">Role</label>
+                                    {(userOutranks || isSelf) ? (
+                                      <span className="rounded-[4px] border border-brand-gray bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary/60">
+                                        {ROLE_LABELS[linkedUser.role]}
+                                      </span>
+                                    ) : (
+                                      <select value={linkedUser.role}
+                                        onChange={(e) => handleUserRoleChange(linkedUser.uid, e.target.value as UserRole)}
+                                        className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary">
+                                        {allowedRoles.map((r) => (
+                                          <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                                        ))}
+                                      </select>
+                                    )}
+                                    <button onClick={() => handleResetPassword(linkedUser.email, linkedUser.displayName)}
+                                      className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary">
+                                      Reset Password
+                                    </button>
+                                    {!isSelf && !userOutranks && (
+                                      userIsInactive ? (
+                                        <button onClick={() => handleReactivateUser(linkedUser.uid)}
+                                          className="rounded-[4px] border border-primary bg-transparent px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                          Reactivate
+                                        </button>
+                                      ) : (
+                                        <button onClick={() => handleDeactivateUser(linkedUser.uid)}
+                                          className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-accent/70 transition hover:bg-accent hover:text-white hover:border-accent">
+                                          Deactivate
+                                        </button>
+                                      )
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="space-y-2">
+                                  <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                                    placeholder="Email address"
+                                    className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                                  {allowedRoles.length === 1 ? (
+                                    <p className="text-[11px] text-primary/50">
+                                      Role: <span className="font-semibold text-primary">{ROLE_LABELS[allowedRoles[0]]}</span>
+                                    </p>
+                                  ) : (
+                                    <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as UserRole)}
+                                      className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                                      {allowedRoles.map((r) => (
+                                        <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                                      ))}
+                                    </select>
+                                  )}
+                                  {(inviteRole === "senior_leader" || inviteRole === "leader") && (
+                                    <div className="rounded-[4px] border border-brand-gray/60 bg-white p-2 space-y-2">
+                                      <p className="text-xs font-bold uppercase tracking-wider text-primary/80">Team they will lead</p>
+                                      <div className="flex gap-3 text-xs">
+                                        <label className="flex items-center gap-1.5 cursor-pointer">
+                                          <input type="radio" checked={inviteLeadsMode === "new"} onChange={() => setInviteLeadsMode("new")} className="accent-primary" />
+                                          <span className="text-primary/70">Create a new team</span>
+                                        </label>
+                                        <label className="flex items-center gap-1.5 cursor-pointer">
+                                          <input type="radio" checked={inviteLeadsMode === "existing"} onChange={() => setInviteLeadsMode("existing")} className="accent-primary" />
+                                          <span className="text-primary/70">Lead an existing team</span>
+                                        </label>
+                                      </div>
+                                      {inviteLeadsMode === "new" ? (
+                                        <>
+                                          <input type="text" value={inviteLeadsNewName} onChange={(e) => setInviteLeadsNewName(e.target.value)}
+                                            placeholder="New team name"
+                                            className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary" />
+                                          <select value={inviteLeadsParentId} onChange={(e) => setInviteLeadsParentId(e.target.value)}
+                                            className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                                            <option value="">Parent team…</option>
+                                            {teams.filter((t) => authorizedTeamIds.has(t.id)).map((t) => (
+                                              <option key={t.id} value={t.id}>{t.name}</option>
+                                            ))}
+                                          </select>
+                                        </>
+                                      ) : (
+                                        <select value={inviteLeadsExistingId} onChange={(e) => setInviteLeadsExistingId(e.target.value)}
+                                          className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                                          <option value="">Select team…</option>
+                                          {teams.filter((t) => authorizedTeamIds.has(t.id)).map((t) => (
+                                            <option key={t.id} value={t.id}>
+                                              {t.name}{t.leaderName ? ` (currently led by ${t.leaderName} — will replace)` : ""}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      )}
+                                    </div>
+                                  )}
+                                  <div className="flex gap-2">
+                                    <button onClick={() => handleInviteMember(m.id, team.id)}
+                                      disabled={inviting || !inviteEmail.trim()}
+                                      className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                      {inviting ? "Sending…" : "Send Invite"}
+                                    </button>
+                                    <button onClick={() => { setInviteEmail(""); setInviteRole("leader"); setInviteLeadsMode("new"); setInviteLeadsExistingId(""); setInviteLeadsNewName(""); setInviteLeadsParentId(team.id); }}
+                                      className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Team they lead */}
+                            {linkedUser && (linkedUser.role === "senior_leader" || linkedUser.role === "leader") && !userIsInactive && (() => {
+                              const currentLed = teams.find((t) => t.leaderId === linkedUser.uid);
+                              return (
+                                <div className="p-3 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-primary/80">Team they lead</p>
+                                    {currentLed && (
+                                      <p className="text-[10px] text-primary/50">Currently: <span className="font-semibold text-primary/70">{currentLed.name}</span></p>
+                                    )}
+                                  </div>
+                                  <div className="flex gap-3 text-xs">
+                                    <label className="flex items-center gap-1.5 cursor-pointer">
+                                      <input type="radio" checked={leadAssignMode === "new"} onChange={() => setLeadAssignMode("new")} className="accent-primary" />
+                                      <span className="text-primary/70">Create a new team</span>
+                                    </label>
+                                    <label className="flex items-center gap-1.5 cursor-pointer">
+                                      <input type="radio" checked={leadAssignMode === "existing"} onChange={() => setLeadAssignMode("existing")} className="accent-primary" />
+                                      <span className="text-primary/70">Lead an existing team</span>
+                                    </label>
+                                  </div>
+                                  {leadAssignMode === "new" ? (
+                                    <>
+                                      <input type="text" value={leadAssignNewName} onChange={(e) => setLeadAssignNewName(e.target.value)}
+                                        placeholder="New team name"
+                                        className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary" />
+                                      <select value={leadAssignParentId} onChange={(e) => setLeadAssignParentId(e.target.value)}
+                                        className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                                        <option value="">Parent team…</option>
+                                        {teams.filter((t) => authorizedTeamIds.has(t.id)).map((t) => (
+                                          <option key={t.id} value={t.id}>{t.name}</option>
+                                        ))}
+                                      </select>
+                                    </>
+                                  ) : (
+                                    <select value={leadAssignExistingId} onChange={(e) => setLeadAssignExistingId(e.target.value)}
+                                      className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                                      <option value="">Select team…</option>
+                                      {teams.filter((t) => authorizedTeamIds.has(t.id) && t.leaderId !== linkedUser.uid).map((t) => (
+                                        <option key={t.id} value={t.id}>
+                                          {t.name}{t.leaderName ? ` (currently led by ${t.leaderName} — will replace)` : ""}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  )}
+                                  <div className="flex gap-2">
+                                    <button onClick={() => handleAssignLeadTeam(linkedUser.uid, linkedUser.displayName)} disabled={leadAssigning}
+                                      className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                      {leadAssigning ? "Saving…" : "Save Team Assignment"}
+                                    </button>
+                                    <button onClick={() => {
+                                      const cur = teams.find((t) => t.leaderId === linkedUser.uid);
+                                      setLeadAssignMode("new");
+                                      setLeadAssignExistingId("");
+                                      setLeadAssignNewName("");
+                                      setLeadAssignParentId(cur ? (cur.parentTeamId ?? team.id) : team.id);
+                                    }}
+                                      className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Danger zone */}
+                            {!isSelf && (
+                              <div className="p-3 space-y-2">
+                                <p className="text-xs font-bold uppercase tracking-wider text-primary/80">Danger zone</p>
+                                {isArchived ? (
+                                  <button onClick={() => handleUnarchiveMember(m.id, team.id)}
+                                    className="rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary/60 transition hover:text-primary hover:border-primary">
+                                    Unarchive Member
+                                  </button>
+                                ) : (
+                                  <>
+                                    {archiveMemberHasAssessments === null ? (
+                                      <p className="text-[10px] text-primary/40 animate-pulse">Checking assessment history…</p>
+                                    ) : (
+                                      <p className="text-[10px] text-primary/50">
+                                        {archiveMemberHasAssessments
+                                          ? "Their assessment history will be preserved for TDI reporting."
+                                          : "No assessments found. You can archive (preserves the record) or permanently delete (entered in error)."}
+                                      </p>
+                                    )}
+                                    <input type="text" value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
+                                      placeholder="Reason (e.g., Left company, Terminated)"
+                                      className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                                    <div className="flex gap-2 flex-wrap">
+                                      <button onClick={() => handleArchiveMember(m.id, team.id, archiveReason)}
+                                        className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
+                                        Archive Member
+                                      </button>
+                                      {archiveMemberHasAssessments === false && (
+                                        <button onClick={() => handleDeleteMember(m.id, team.id)}
+                                          className="rounded-[4px] border-[1.5px] border-accent bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-accent transition hover:bg-accent hover:text-white">
+                                          Delete Permanently
+                                        </button>
+                                      )}
+                                      <button onClick={() => setArchiveReason("")}
+                                        className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
                             )}
                           </div>
                         )}
-
-                        {/* Change team form */}
-                        {isChangingTeam && (
-                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
-                            <p className="text-xs font-semibold text-primary/60">Move {m.name} to another team</p>
-                            <select value={changingTeamToId} onChange={(e) => setChangingTeamToId(e.target.value)}
-                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
-                              <option value="">Select team...</option>
-                              {teams.filter((t) => t.id !== team.id && authorizedTeamIds.has(t.id)).map((t) => (
-                                <option key={t.id} value={t.id}>{t.name}</option>
-                              ))}
-                            </select>
-                            <div className="flex gap-2">
-                              <button onClick={handleChangeTeam} disabled={!changingTeamToId}
-                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-                                Move
-                              </button>
-                              <button onClick={() => { setChangingTeamMemberId(null); setChangingTeamFromId(null); setChangingTeamToId(""); }}
-                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Promote confirmation */}
-                        {isPromoting && (
-                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
-                            <p className="text-xs font-semibold text-primary/60">Promote {m.name} to leader of {team.name}?</p>
-                            {team.leaderName && <p className="text-[10px] text-primary/40">This will replace {team.leaderName} as the team leader.</p>}
-                            <div className="flex gap-2">
-                              <button onClick={handlePromoteToLeader}
-                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
-                                Promote
-                              </button>
-                              <button onClick={() => { setPromotingMemberId(null); setPromotingTeamId(null); }}
-                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {isEditing && !isArchived && (
-                          <div className="border-t border-brand-gray/50 p-2.5 space-y-2">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Name</label>
-                                <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
-                                  className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                              </div>
-                              <div>
-                                <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Title</label>
-                                <input type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)}
-                                  className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                              </div>
-                            </div>
-                            <div className="flex gap-2 flex-wrap">
-                              <button onClick={() => handleSaveMember(m.id, team.id)}
-                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
-                                Save
-                              </button>
-                              <button onClick={() => { setChangingTeamMemberId(m.id); setChangingTeamFromId(team.id); setChangingTeamToId(""); setEditingMemberId(null); }}
-                                className="rounded-[4px] border-[1.5px] border-blue-500 bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-500 transition hover:bg-blue-500 hover:text-white">
-                                Change Team
-                              </button>
-                              <button onClick={() => { setPromotingMemberId(m.id); setPromotingTeamId(team.id); setEditingMemberId(null); }}
-                                className="rounded-[4px] border-[1.5px] border-green-600 bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-green-600 transition hover:bg-green-600 hover:text-white">
-                                Promote to Leader
-                              </button>
-                              {isAdmin && !m.isAppUser && (
-                                <button onClick={() => { setInvitingMemberId(m.id); setInviteEmail(""); setInviteRole("leader"); setEditingMemberId(null); }}
-                                  className="rounded-[4px] border-[1.5px] border-accent bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-accent transition hover:bg-accent hover:text-white">
-                                  Invite as User
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        )}
                       </div>
+
+                      {/* Per-member "+ Add Sub-Team" + nested sub-teams led by this member */}
+                      {!isArchived && (canManage || (ledByMemberId.get(m.id)?.length ?? 0) > 0) && (
+                        <div className="ml-3 mt-1 space-y-2 border-l-2 border-brand-gray/30 pl-3">
+                          {(ledByMemberId.get(m.id) ?? []).map((sub) => (
+                            <div key={`sub-${sub.id}`}>{renderTeam(sub)}</div>
+                          ))}
+                          {canManage && addSubTeamForMemberId === m.id ? (
+                            <div className="rounded-[4px] border border-brand-gray/50 bg-primary/[0.02] p-3 space-y-2">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">
+                                New sub-team — {m.name} will lead
+                              </p>
+                              <input type="text" value={newSubTeamName}
+                                onChange={(e) => setNewSubTeamName(e.target.value)}
+                                placeholder="Sub-team name"
+                                className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                              <div className="flex gap-2">
+                                <button onClick={() => handleCreateSubTeamForMember(team, m)}
+                                  disabled={!newSubTeamName.trim()}
+                                  className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                  Create
+                                </button>
+                                <button onClick={() => { setAddSubTeamForMemberId(null); setNewSubTeamName(""); }}
+                                  className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : canManage ? (
+                            <button onClick={() => { setAddSubTeamForMemberId(m.id); setNewSubTeamName(""); }}
+                              className="text-xs font-semibold text-primary/50 transition hover:text-primary">
+                              + Add Sub-Team
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </div>
@@ -1208,30 +1605,82 @@ export default function TeamsPage() {
                   {dupWarning && (
                     <p className="text-[11px] text-accent bg-accent/10 rounded-[4px] px-2 py-1">{dupWarning}</p>
                   )}
-                  {isAdmin && (
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input type="checkbox" checked={newMemberInvite}
-                        onChange={(e) => setNewMemberInvite(e.target.checked)}
-                        disabled={!newMemberEmail.trim()}
-                        className="h-3.5 w-3.5 accent-primary" />
-                      <span className="text-xs text-primary/60">Invite as app user</span>
-                      {!newMemberEmail.trim() && <span className="text-[10px] text-primary/30">(enter email first)</span>}
-                    </label>
-                  )}
-                  {isAdmin && newMemberInvite && (
-                    <select value={newMemberRole} onChange={(e) => setNewMemberRole(e.target.value as UserRole)}
-                      className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
-                      {ASSIGNABLE_ROLES.map((r) => (
-                        <option key={r} value={r}>{ROLE_LABELS[r]}</option>
-                      ))}
-                    </select>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={newMemberInvite}
+                      onChange={(e) => setNewMemberInvite(e.target.checked)}
+                      disabled={!newMemberEmail.trim()}
+                      className="h-3.5 w-3.5 accent-primary" />
+                    <span className="text-xs text-primary/60">Invite as app user</span>
+                    {!newMemberEmail.trim() && <span className="text-[10px] text-primary/30">(enter email first)</span>}
+                  </label>
+                  {newMemberInvite && (() => {
+                    const allowedRoles = profile ? assignableRolesFor(profile.role) : ["leader" as UserRole];
+                    if (allowedRoles.length === 1) {
+                      return (
+                        <p className="text-[11px] text-primary/50">
+                          Role: <span className="font-semibold text-primary">{ROLE_LABELS[allowedRoles[0]]}</span>
+                        </p>
+                      );
+                    }
+                    return (
+                      <select value={newMemberRole} onChange={(e) => setNewMemberRole(e.target.value as UserRole)}
+                        className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                        {allowedRoles.map((r) => (
+                          <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                        ))}
+                      </select>
+                    );
+                  })()}
+                  {newMemberInvite && (newMemberRole === "senior_leader" || newMemberRole === "leader") && (
+                    <div className="rounded-[4px] border border-brand-gray/60 bg-white p-2 space-y-2">
+                      <p className="text-xs font-bold uppercase tracking-wider text-primary/80">
+                        Team they will lead
+                      </p>
+                      <div className="flex gap-3 text-xs">
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="radio" checked={newMemberLeadsMode === "new"} onChange={() => setNewMemberLeadsMode("new")} className="accent-primary" />
+                          <span className="text-primary/70">Create a new team</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input type="radio" checked={newMemberLeadsMode === "existing"} onChange={() => setNewMemberLeadsMode("existing")} className="accent-primary" />
+                          <span className="text-primary/70">Lead an existing team</span>
+                        </label>
+                      </div>
+                      {newMemberLeadsMode === "new" ? (
+                        <>
+                          <input type="text" value={newMemberLeadsNewName}
+                            onChange={(e) => setNewMemberLeadsNewName(e.target.value)}
+                            placeholder="New team name (e.g., Sales)"
+                            className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary" />
+                          <select value={newMemberLeadsParentId}
+                            onChange={(e) => setNewMemberLeadsParentId(e.target.value)}
+                            className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                            <option value="">Parent team…</option>
+                            {teams.filter((t) => authorizedTeamIds.has(t.id)).map((t) => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        </>
+                      ) : (
+                        <select value={newMemberLeadsExistingId}
+                          onChange={(e) => setNewMemberLeadsExistingId(e.target.value)}
+                          className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                          <option value="">Select team…</option>
+                          {teams.filter((t) => authorizedTeamIds.has(t.id)).map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}{t.leaderName ? ` (currently led by ${t.leaderName} — will replace)` : ""}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                   )}
                   <div className="flex gap-2">
                     <button onClick={() => handleAddMember(team.id)} disabled={addingMember || !newMemberName.trim()}
                       className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
                       {addingMember ? "Adding..." : "Add"}
                     </button>
-                    <button onClick={() => { setAddMemberTeamId(null); setNewMemberName(""); setNewMemberTitle(""); setNewMemberEmail(""); setNewMemberInvite(false); setDupWarning(""); }}
+                    <button onClick={() => { setAddMemberTeamId(null); setNewMemberName(""); setNewMemberTitle(""); setNewMemberEmail(""); setNewMemberInvite(false); setDupWarning(""); setNewMemberLeadsExistingId(""); setNewMemberLeadsNewName(""); setNewMemberLeadsParentId(""); }}
                       className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
                       Cancel
                     </button>
@@ -1239,76 +1688,28 @@ export default function TeamsPage() {
                 </div>
               ) : canManage ? (
                 <div className="mt-2 flex gap-3">
-                  <button onClick={() => setAddMemberTeamId(team.id)}
+                  <button onClick={() => {
+                    setAddMemberTeamId(team.id);
+                    setNewMemberLeadsMode("new");
+                    setNewMemberLeadsExistingId("");
+                    setNewMemberLeadsNewName("");
+                    setNewMemberLeadsParentId(team.id);
+                  }}
                     className="text-xs font-semibold text-accent transition hover:opacity-70">
                     + Add Member
                   </button>
-                  {canManage && (
-                    <button onClick={() => { setAddSubTeamParentId(team.id); setNewSubTeamName(""); setNewSubTeamLeader(""); setNewSubTeamLeaderTitle(""); }}
-                      className="text-xs font-semibold text-primary/50 transition hover:text-primary">
-                      + Add Sub-Team
-                    </button>
-                  )}
                 </div>
               ) : null}
 
-              {/* Add sub-team form */}
-              {addSubTeamParentId === team.id && (
-                <div className="mt-2 rounded-[4px] border border-brand-gray/50 bg-primary/[0.02] p-3 space-y-2">
-                  <div>
-                    <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Sub-Team Name</label>
-                    <input type="text" value={newSubTeamName} onChange={(e) => setNewSubTeamName(e.target.value)}
-                      placeholder="e.g., Finance, Sales, Marketing"
-                      className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Leader</label>
-                      {users.length > 0 ? (
-                        <select value={newSubTeamLeader} onChange={(e) => {
-                          setNewSubTeamLeader(e.target.value);
-                          const selectedUser = users.find((u) => u.uid === e.target.value);
-                          if (selectedUser) {
-                            const knownTitle = findPersonTitle(selectedUser.displayName);
-                            if (knownTitle) setNewSubTeamLeaderTitle(knownTitle);
-                          }
-                        }}
-                          className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
-                          <option value="">Select leader...</option>
-                          {users.map((u) => (
-                            <option key={u.uid} value={u.uid}>{u.displayName}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input type="text" value={newSubTeamLeader} onChange={(e) => setNewSubTeamLeader(e.target.value)}
-                          placeholder="Leader name"
-                          className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                      )}
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Leader Title</label>
-                      <input type="text" value={newSubTeamLeaderTitle} onChange={(e) => setNewSubTeamLeaderTitle(e.target.value)}
-                        placeholder="e.g., VP Finance"
-                        className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => handleCreateSubTeam(team.id, team.level ?? 0)} disabled={!newSubTeamName.trim()}
-                      className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-                      Create
-                    </button>
-                    <button onClick={() => setAddSubTeamParentId(null)}
-                      className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Child teams */}
-              {childTeams.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  {childTeams.map((child) => renderTeam(child))}
+              {/* Other sub-teams — sub-teams whose leader isn't a member of
+                  this team (archived leader, leader-only setup, legacy data).
+                  Render at the bottom so the natural hierarchy stays clean. */}
+              {orphanChildTeams.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">
+                    Other sub-teams
+                  </p>
+                  {orphanChildTeams.map((child) => renderTeam(child))}
                 </div>
               )}
             </div>
@@ -1342,50 +1743,196 @@ export default function TeamsPage() {
             <h2 className="text-sm font-semibold uppercase tracking-wider text-yellow-800">
               Unlinked Users ({unlinkedUsers.length})
             </h2>
-            <p className="mt-1 text-xs text-yellow-700">These users exist in the system but aren&apos;t assigned to a team. Assign them to a team or deactivate if no longer needed.</p>
+            <p className="mt-1 text-xs text-yellow-700">These users exist in the system but aren&apos;t assigned to a team. Open a row to assign them to a team or change their settings.</p>
             <div className="mt-3 space-y-2">
-              {unlinkedUsers.map((u) => (
-                <div key={u.uid} className="rounded-[4px] border border-yellow-200 bg-white p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1">
-                      <p className="text-sm font-semibold text-primary">{u.displayName}</p>
-                      <p className="text-xs text-primary/50">{u.email} · {ROLE_LABELS[u.role]}</p>
-                    </div>
-                    <button onClick={() => { setAssignTeamUserId(u.uid); setAssignTeamId(""); setAssignTeamTitle(""); }}
-                      className="rounded-[4px] bg-primary px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
-                      Assign to Team
-                    </button>
-                    <button onClick={() => handleDeactivateUser(u.uid)}
-                      className="text-xs text-accent/50 transition hover:text-accent">
-                      Deactivate
-                    </button>
-                  </div>
-                  {assignTeamUserId === u.uid && (
-                    <div className="mt-3 space-y-2">
-                      <select value={assignTeamId} onChange={(e) => setAssignTeamId(e.target.value)}
-                        className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
-                        <option value="">Select team...</option>
-                        {teams.map((t) => (
-                          <option key={t.id} value={t.id}>{t.name}</option>
-                        ))}
-                      </select>
-                      <input type="text" value={assignTeamTitle} onChange={(e) => setAssignTeamTitle(e.target.value)}
-                        placeholder="Title (optional)"
-                        className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
-                      <div className="flex gap-2">
-                        <button onClick={handleAssignUnlinkedUser} disabled={assigning || !assignTeamId}
-                          className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
-                          {assigning ? "Assigning..." : "Assign"}
-                        </button>
-                        <button onClick={() => setAssignTeamUserId(null)}
-                          className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
-                          Cancel
-                        </button>
+              {unlinkedUsers.map((u) => {
+                const isPanelOpen = openUnlinkedPanelId === u.uid;
+                const ledTeam = teams.find((t) => t.leaderId === u.uid);
+                const allowedRoles = profile ? assignableRolesFor(profile.role) : ["leader" as UserRole];
+                const userOutranks = !allowedRoles.includes(u.role);
+                const isSelf = u.uid === profile?.uid;
+                const userIsInactive = u.isActive === false;
+                return (
+                  <div key={u.uid} className="rounded-[4px] border border-yellow-200 bg-white">
+                    <div className="flex items-center gap-3 p-3">
+                      <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-primary">{u.displayName}</p>
+                        <p className="text-xs text-primary/50">{u.email}</p>
+                        <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/60">
+                          {ROLE_LABELS[u.role]}
+                        </span>
+                        {ledTeam && (
+                          <span className="rounded-[2px] bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-blue-700">
+                            Leads {ledTeam.name}
+                          </span>
+                        )}
+                        {userIsInactive && (
+                          <span className="rounded-[2px] bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-primary/40">
+                            Inactive
+                          </span>
+                        )}
                       </div>
+                      <button onClick={() => isPanelOpen ? closeUnlinkedPanel() : openUnlinkedPanel(u)}
+                        className="text-xs text-primary/50 transition hover:text-primary" title="Edit">
+                        {isPanelOpen ? "▲" : "✎"}
+                      </button>
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    {isPanelOpen && (
+                      <div className="border-t border-yellow-200 divide-y divide-yellow-200/60 bg-primary/[0.02]">
+                        {/* App user section */}
+                        <div className="p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-bold uppercase tracking-wider text-primary/80">App user</p>
+                            <p className="text-[10px] text-primary/50">Status: {userIsInactive ? "User · Inactive" : "User · Active"}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] uppercase tracking-wider text-primary/40">Email</label>
+                            <div className="flex items-center gap-2">
+                              <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)}
+                                className="flex-1 rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                              <button onClick={() => handleUpdateEmail(u.uid, u.displayName)}
+                                disabled={emailSaving}
+                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                {emailSaving ? "Saving…" : "Save Email"}
+                              </button>
+                              <button onClick={() => { setEditEmail(u.email); setEmailError(""); }}
+                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Cancel
+                              </button>
+                            </div>
+                            {emailError && <p className="text-[10px] text-accent">{emailError}</p>}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <label className="text-[10px] uppercase tracking-wider text-primary/40">Role</label>
+                            {(userOutranks || isSelf) ? (
+                              <span className="rounded-[4px] border border-brand-gray bg-primary/5 px-2 py-1 text-[10px] font-semibold text-primary/60">
+                                {ROLE_LABELS[u.role]}
+                              </span>
+                            ) : (
+                              <select value={u.role}
+                                onChange={(e) => handleUserRoleChange(u.uid, e.target.value as UserRole)}
+                                className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold text-primary outline-none focus:border-primary">
+                                {allowedRoles.map((r) => (
+                                  <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                                ))}
+                              </select>
+                            )}
+                            <button onClick={() => handleResetPassword(u.email, u.displayName)}
+                              className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary/50 transition hover:text-primary hover:border-primary">
+                              Reset Password
+                            </button>
+                            {!isSelf && !userOutranks && (
+                              userIsInactive ? (
+                                <button onClick={() => handleReactivateUser(u.uid)}
+                                  className="rounded-[4px] border border-primary bg-transparent px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                  Reactivate
+                                </button>
+                              ) : (
+                                <button onClick={() => handleDeactivateUser(u.uid)}
+                                  className="rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-accent/70 transition hover:bg-accent hover:text-white hover:border-accent">
+                                  Deactivate
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Assign to a team as a member */}
+                        {!userIsInactive && (
+                          <div className="p-3 space-y-2">
+                            <p className="text-xs font-bold uppercase tracking-wider text-primary/80">Assign to a team as a member</p>
+                            <select value={assignTeamUserId === u.uid ? assignTeamId : ""}
+                              onChange={(e) => { setAssignTeamUserId(u.uid); setAssignTeamId(e.target.value); }}
+                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary">
+                              <option value="">Select team…</option>
+                              {teams.map((t) => (
+                                <option key={t.id} value={t.id}>{t.name}</option>
+                              ))}
+                            </select>
+                            <input type="text" value={assignTeamUserId === u.uid ? assignTeamTitle : ""}
+                              onChange={(e) => { setAssignTeamUserId(u.uid); setAssignTeamTitle(e.target.value); }}
+                              placeholder="Title (optional)"
+                              className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
+                            <div className="flex gap-2">
+                              <button onClick={handleAssignUnlinkedUser} disabled={assigning || !assignTeamId || assignTeamUserId !== u.uid}
+                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                {assigning ? "Assigning…" : "Assign to Team"}
+                              </button>
+                              <button onClick={() => { setAssignTeamId(""); setAssignTeamTitle(""); }}
+                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Team they lead */}
+                        {(u.role === "senior_leader" || u.role === "leader") && !userIsInactive && (
+                          <div className="p-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs font-bold uppercase tracking-wider text-primary/80">Team they lead</p>
+                              {ledTeam && (
+                                <p className="text-[10px] text-primary/50">Currently: <span className="font-semibold text-primary/70">{ledTeam.name}</span></p>
+                              )}
+                            </div>
+                            <div className="flex gap-3 text-xs">
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" checked={leadAssignMode === "new"} onChange={() => setLeadAssignMode("new")} className="accent-primary" />
+                                <span className="text-primary/70">Create a new team</span>
+                              </label>
+                              <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input type="radio" checked={leadAssignMode === "existing"} onChange={() => setLeadAssignMode("existing")} className="accent-primary" />
+                                <span className="text-primary/70">Lead an existing team</span>
+                              </label>
+                            </div>
+                            {leadAssignMode === "new" ? (
+                              <>
+                                <input type="text" value={leadAssignNewName} onChange={(e) => setLeadAssignNewName(e.target.value)}
+                                  placeholder="New team name"
+                                  className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary" />
+                                <select value={leadAssignParentId} onChange={(e) => setLeadAssignParentId(e.target.value)}
+                                  className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                                  <option value="">Parent team…</option>
+                                  {teams.filter((t) => authorizedTeamIds.has(t.id)).map((t) => (
+                                    <option key={t.id} value={t.id}>{t.name}</option>
+                                  ))}
+                                </select>
+                              </>
+                            ) : (
+                              <select value={leadAssignExistingId} onChange={(e) => setLeadAssignExistingId(e.target.value)}
+                                className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-xs text-primary outline-none focus:border-primary">
+                                <option value="">Select team…</option>
+                                {teams.filter((t) => authorizedTeamIds.has(t.id) && t.leaderId !== u.uid).map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name}{t.leaderName ? ` (currently led by ${t.leaderName} — will replace)` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <div className="flex gap-2">
+                              <button onClick={() => handleAssignLeadTeam(u.uid, u.displayName)} disabled={leadAssigning}
+                                className="rounded-[4px] bg-primary px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
+                                {leadAssigning ? "Saving…" : "Save Team Assignment"}
+                              </button>
+                              <button onClick={() => {
+                                const cur = teams.find((t) => t.leaderId === u.uid);
+                                setLeadAssignMode("new");
+                                setLeadAssignExistingId("");
+                                setLeadAssignNewName("");
+                                setLeadAssignParentId(cur ? (cur.parentTeamId ?? "") : "");
+                              }}
+                                className="rounded-[4px] border-[1.5px] border-primary bg-transparent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary hover:text-white">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1488,12 +2035,35 @@ export default function TeamsPage() {
         </div>
 
         {error && <p className="mt-4 text-sm text-accent">{error}</p>}
+        {notice && (
+          <div className="mt-4 flex items-start gap-3 rounded-[4px] border border-yellow-300 bg-yellow-50 px-4 py-3">
+            <p className="flex-1 text-sm text-yellow-900">{notice}</p>
+            <button
+              type="button"
+              onClick={() => setNotice("")}
+              className="text-xs font-semibold uppercase tracking-wider text-yellow-900/60 transition hover:text-yellow-900"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <div className="mt-4 space-y-3">
           {topLevelTeams.map((team) => renderTeam(team))}
         </div>
 
-        {topLevelTeams.length === 0 && (
+        {topLevelTeams.length === 0 && !loading && !isAdmin && authorizedTeamIds.size === 0 && (
+          <div className="mt-6 rounded-[4px] border border-brand-gray bg-primary/[0.02] p-6">
+            <p className="text-sm font-semibold text-primary">You&apos;re not currently leading any teams.</p>
+            <p className="mt-2 text-sm text-primary/60">
+              You haven&apos;t been assigned as the leader of a team in this company yet.
+              Ask your company admin to assign you to a team — once they do, you&apos;ll
+              be able to add team members and sub-teams here.
+            </p>
+          </div>
+        )}
+
+        {topLevelTeams.length === 0 && !loading && (isAdmin || authorizedTeamIds.size > 0) && (
           <p className="mt-6 text-sm font-light text-primary/70">Loading team structure...</p>
         )}
       </div>

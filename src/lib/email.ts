@@ -1,25 +1,44 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.office365.com",
-  port: Number(process.env.SMTP_PORT) || 587,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+let cachedResend: Resend | null = null;
 
-const FROM_NAME = process.env.SMTP_FROM_NAME || "Talent Density Systems";
-const FROM_EMAIL = process.env.SMTP_USER || "noreply@example.com";
+function getResend(): Resend {
+  if (cachedResend) return cachedResend;
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "RESEND_API_KEY is not set. Add it to .env.local to enable email sending."
+    );
+  }
+  cachedResend = new Resend(apiKey);
+  return cachedResend;
+}
+
+const FROM_NAME = process.env.EMAIL_FROM_NAME || "Talent Density Systems";
+const FROM_EMAIL = process.env.EMAIL_FROM || "onboarding@resend.dev";
+const FROM = `${FROM_NAME} <${FROM_EMAIL}>`;
+
+async function send(opts: { to: string; subject: string; html: string }) {
+  const { data, error } = await getResend().emails.send({
+    from: FROM,
+    to: opts.to,
+    subject: opts.subject,
+    html: opts.html,
+  });
+  if (error) {
+    // Bubble up so callers' try/catch fires and the UI banner surfaces it.
+    const detail = (error as { message?: string }).message ?? JSON.stringify(error);
+    throw new Error(detail);
+  }
+  return data;
+}
 
 export async function sendWelcomeEmail(
   toEmail: string,
   displayName: string,
   resetLink: string
 ) {
-  await transporter.sendMail({
-    from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+  await send({
     to: toEmail,
     subject: "Welcome to Talent Density Systems — Set Your Password",
     html: `
@@ -48,8 +67,7 @@ export async function sendEmailChangedEmail(
   displayName: string,
   loginUrl: string
 ) {
-  await transporter.sendMail({
-    from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+  await send({
     to: newEmail,
     subject: "Your login email has been updated — Talent Density Systems",
     html: `
@@ -78,8 +96,7 @@ export async function sendPasswordResetEmail(
   displayName: string,
   resetLink: string
 ) {
-  await transporter.sendMail({
-    from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+  await send({
     to: toEmail,
     subject: "Reset Your Password — Talent Density Systems",
     html: `

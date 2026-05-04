@@ -7,7 +7,27 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { companyId, email, displayName, role, teamId } = body;
+    const {
+      companyId,
+      email,
+      displayName,
+      role,
+      teamId,
+      // Optional: assign the new user as the leader of an existing team.
+      // The UI must already have confirmed any leader replacement.
+      leadsExistingTeamId,
+      // Optional: create a brand-new team and make the new user its leader.
+      // { name: string, parentTeamId: string }
+      leadsNewTeam,
+    } = body as {
+      companyId?: string;
+      email?: string;
+      displayName?: string;
+      role?: string;
+      teamId?: string;
+      leadsExistingTeamId?: string;
+      leadsNewTeam?: { name?: string; parentTeamId?: string };
+    };
 
     if (!email || !displayName || !role) {
       return NextResponse.json(
@@ -24,9 +44,63 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (leadsExistingTeamId && leadsNewTeam) {
+      return NextResponse.json(
+        { error: "Specify either an existing team or a new team to lead, not both." },
+        { status: 400 }
+      );
+    }
+
+    if (leadsNewTeam && (!leadsNewTeam.name?.trim() || !leadsNewTeam.parentTeamId)) {
+      return NextResponse.json(
+        { error: "New team requires both a name and a parent team." },
+        { status: 400 }
+      );
+    }
+
     const adminAuth = getAdminAuth();
     const adminDb = getAdminDb();
     const trimmedEmail = email.trim();
+
+    // Pre-flight: if creating a new team, verify the parent exists and the
+    // proposed name doesn't duplicate an existing sibling.
+    if (companyId && leadsNewTeam) {
+      const parentRef = adminDb.doc(`companies/${companyId}/teams/${leadsNewTeam.parentTeamId}`);
+      const parentSnap = await parentRef.get();
+      if (!parentSnap.exists) {
+        return NextResponse.json(
+          { error: "Parent team not found." },
+          { status: 404 }
+        );
+      }
+
+      const proposedName = leadsNewTeam.name!.trim();
+      const dupSnap = await adminDb
+        .collection("companies")
+        .doc(companyId)
+        .collection("teams")
+        .where("parentTeamId", "==", leadsNewTeam.parentTeamId)
+        .where("name", "==", proposedName)
+        .get();
+      if (!dupSnap.empty) {
+        return NextResponse.json(
+          { error: `A team named "${proposedName}" already exists under this parent.` },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Pre-flight: if assigning to an existing team, verify it exists.
+    if (companyId && leadsExistingTeamId) {
+      const teamRef = adminDb.doc(`companies/${companyId}/teams/${leadsExistingTeamId}`);
+      const teamSnap = await teamRef.get();
+      if (!teamSnap.exists) {
+        return NextResponse.json(
+          { error: "Team to lead not found." },
+          { status: 404 }
+        );
+      }
+    }
 
     // Per-company duplicate check (only for company users — superadmins live
     // outside any company). Archived users live in /usersArchived and won't
@@ -175,18 +249,61 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Team-to-lead assignment.
+    //  - leadsExistingTeamId → flip leaderId on the existing team.
+    //  - leadsNewTeam       → create a new team with the new user as leader.
+    let ledTeamId: string | null = null;
+    let replacedLeaderId: string | null = null;
+    if (companyId && leadsExistingTeamId) {
+      const teamRef = adminDb.doc(`companies/${companyId}/teams/${leadsExistingTeamId}`);
+      const teamSnap = await teamRef.get();
+      const prev = teamSnap.data() ?? {};
+      replacedLeaderId = prev.leaderId || null;
+      await teamRef.update({
+        leaderId: uid,
+        leaderName: displayName,
+        leaderTitle: prev.leaderTitle || "",
+        updatedAt: now,
+      });
+      ledTeamId = leadsExistingTeamId;
+    } else if (companyId && leadsNewTeam) {
+      const parentRef = adminDb.doc(`companies/${companyId}/teams/${leadsNewTeam.parentTeamId!}`);
+      const parentSnap = await parentRef.get();
+      const parent = parentSnap.data() ?? {};
+      const parentLevel = typeof parent.level === "number" ? parent.level : 0;
+      const newTeamRef = adminDb.collection(`companies/${companyId}/teams`).doc();
+      await newTeamRef.set({
+        name: leadsNewTeam.name!.trim(),
+        parentTeamId: leadsNewTeam.parentTeamId!,
+        level: parentLevel + 1,
+        leaderId: uid,
+        leaderName: displayName,
+        leaderTitle: "",
+        createdAt: now,
+        updatedAt: now,
+      });
+      ledTeamId = newTeamRef.id;
+    }
+
     // Email handling:
     //  - Fresh Auth account → send welcome email with password reset link.
     //  - Existing Auth account (added to a new company) → skip the password
     //    reset. The user already has working credentials; sending a reset
     //    link would be confusing and a security footgun.
     let resetLink = "";
+    let emailSent = false;
+    let emailError: string | null = null;
     if (createdFreshAuthAccount) {
       try {
         resetLink = await adminAuth.generatePasswordResetLink(trimmedEmail);
         await sendWelcomeEmail(trimmedEmail, displayName, resetLink);
+        emailSent = true;
       } catch (emailErr) {
         console.error("Welcome email error:", emailErr);
+        emailError =
+          emailErr instanceof Error
+            ? emailErr.message
+            : "Failed to send welcome email.";
       }
     }
 
@@ -194,6 +311,10 @@ export async function POST(request: NextRequest) {
       uid,
       resetLink,
       reusedExistingAuth: !createdFreshAuthAccount,
+      emailSent,
+      emailError,
+      ledTeamId,
+      replacedLeaderId,
     });
   } catch (err: unknown) {
     console.error("User creation error:", err);
