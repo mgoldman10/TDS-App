@@ -32,14 +32,17 @@ export default function CompanyPicker() {
       const resolved = await Promise.all(
         memberships.map(async (m) => {
           const c = await getCompany(m.companyId);
+          if (!c || c.isActive === false) return null;
           return {
             companyId: m.companyId,
-            companyName: c?.name ?? m.companyId,
+            companyName: c.name,
             role: m.role,
           };
         })
       );
-      if (!cancelled) setItems(resolved);
+      if (!cancelled) {
+        setItems(resolved.filter((x): x is MembershipDisplay => x !== null));
+      }
     }
     load();
     return () => {

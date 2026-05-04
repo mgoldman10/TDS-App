@@ -53,6 +53,8 @@ export interface Company {
   fiscalYearStartMonth: number; // 1-12, default 1 (January)
   scoringParameters: ScoringParameters;
   tdiGoals?: TdiGoals;
+  isActive?: boolean;       // missing/true = active; false = archived
+  archivedAt?: Timestamp;   // when archived
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

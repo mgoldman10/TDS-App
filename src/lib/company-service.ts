@@ -19,7 +19,16 @@ export async function getCompany(companyId: string): Promise<Company | null> {
 
 export async function getCompanies(): Promise<Company[]> {
   const snap = await getDocs(collection(db, "companies"));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Company));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as Company))
+    .filter((c) => c.isActive !== false);
+}
+
+export async function getArchivedCompanies(): Promise<Company[]> {
+  const snap = await getDocs(collection(db, "companies"));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as Company))
+    .filter((c) => c.isActive === false);
 }
 
 export async function createCompany(name: string): Promise<string> {

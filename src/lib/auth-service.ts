@@ -5,6 +5,22 @@ import type {
   UserMapping,
   UserProfile,
 } from "@/types/auth";
+import type { Company } from "@/types/company";
+
+async function getActiveCompanyIds(
+  companyIds: string[]
+): Promise<Set<string>> {
+  const unique = Array.from(new Set(companyIds));
+  const results = await Promise.all(
+    unique.map(async (id) => {
+      const snap = await getDoc(doc(db, "companies", id));
+      if (!snap.exists()) return null;
+      const data = snap.data() as Partial<Company>;
+      return data.isActive === false ? null : id;
+    })
+  );
+  return new Set(results.filter((id): id is string => id !== null));
+}
 
 export async function getUserMapping(uid: string): Promise<UserMapping | null> {
   const snap = await getDoc(doc(db, "userMappings", uid));
@@ -31,30 +47,37 @@ export async function getSuperadminProfile(
 
 /**
  * Returns all company memberships for a user, normalizing legacy mappings
- * (single companyId/role) into the memberships[] shape.
+ * (single companyId/role) into the memberships[] shape, and filtering out
+ * any memberships pointing at archived companies. From the user's POV, an
+ * archived company isn't somewhere they can log into.
  */
 export async function getUserMemberships(
   uid: string
 ): Promise<CompanyMembership[]> {
   const mapping = await getUserMapping(uid);
   if (!mapping) return [];
+
+  let raw: CompanyMembership[];
   if (mapping.memberships && mapping.memberships.length > 0) {
-    return [...mapping.memberships].sort((a, b) => {
+    raw = [...mapping.memberships].sort((a, b) => {
       const aMs = a.addedAt?.toMillis?.() ?? 0;
       const bMs = b.addedAt?.toMillis?.() ?? 0;
       return aMs - bMs;
     });
-  }
-  if (mapping.companyId) {
-    return [
+  } else if (mapping.companyId) {
+    raw = [
       {
         companyId: mapping.companyId,
         role: mapping.role,
         addedAt: Timestamp.fromMillis(0),
       },
     ];
+  } else {
+    return [];
   }
-  return [];
+
+  const activeIds = await getActiveCompanyIds(raw.map((m) => m.companyId));
+  return raw.filter((m) => activeIds.has(m.companyId));
 }
 
 /**

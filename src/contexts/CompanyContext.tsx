@@ -38,10 +38,18 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       const company = await getCompany(companyId);
-      if (company) {
+      if (company && company.isActive !== false) {
         setActiveCompany(company);
         if (typeof window !== "undefined") {
           localStorage.setItem(ACTIVE_COMPANY_KEY, companyId);
+        }
+      } else {
+        // Either company doesn't exist or it has been archived. Don't pin
+        // the user to a dead selection — clear the saved choice and let
+        // the picker / membership logic re-resolve.
+        setActiveCompany(null);
+        if (typeof window !== "undefined") {
+          localStorage.removeItem(ACTIVE_COMPANY_KEY);
         }
       }
     } catch {
