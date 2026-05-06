@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { Timestamp } from "firebase/firestore";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -308,10 +307,13 @@ export default function MemberSummaryPage() {
     if (!plan) {
       const id = await createActionPlan(companyId, { memberId, memberName: member?.name ?? "" });
       plan = { id, memberId, memberName: member?.name ?? "", actions: [], notes: [], createdAt: null, updatedAt: null } as unknown as ActionPlan;
+      setMemberPlan(plan);
     }
-    const newNote: ActionNote = { id: crypto.randomUUID(), actionItemId, text, createdAt: Timestamp.now() };
-    await addNote(companyId, plan.id, plan.notes, text, actionItemId);
-    setMemberPlan({ ...plan, notes: [...plan.notes, newNote] });
+    // Pre-generate the note id so the DB row and the optimistic local copy
+    // stay in sync (arrayUnion treats different ids as different items).
+    const noteId = crypto.randomUUID();
+    const written = await addNote(companyId, plan.id, plan.notes, text, actionItemId, noteId);
+    setMemberPlan({ ...plan, notes: [...plan.notes, written] });
     if (textOverride === undefined) setNewNoteText("");
   }
 

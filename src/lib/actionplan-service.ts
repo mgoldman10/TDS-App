@@ -9,7 +9,7 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
-  limit,
+  arrayUnion,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import type { ActionPlan, ActionItem, ActionNote } from "@/types/actionplan";
@@ -30,20 +30,55 @@ function backfillIds(plan: ActionPlan): ActionPlan {
   return { ...plan, actions, notes };
 }
 
-/** Get the single ongoing action plan for a member (creates none — call createActionPlan if needed) */
+/**
+ * Get the action plan for a member.
+ *
+ * Historically rare race conditions (rapid clicks while memberPlan was null,
+ * or two write paths each calling createActionPlan) could produce more than
+ * one plan doc per memberId. If we just return the newest, notes/actions
+ * written to the older one disappear on reload. So we fetch every plan for
+ * this member and merge actions + notes by id, returning the merged set
+ * keyed by the OLDEST plan's id (so subsequent writes converge there).
+ */
 export async function getActionPlanForMember(
   companyId: string,
   memberId: string
 ): Promise<ActionPlan | null> {
-  const q = query(
-    plansRef(companyId),
-    where("memberId", "==", memberId),
-    orderBy("createdAt", "desc"),
-    limit(1)
-  );
+  const q = query(plansRef(companyId), where("memberId", "==", memberId));
   const snap = await getDocs(q);
   if (snap.empty) return null;
-  return backfillIds({ id: snap.docs[0].id, ...snap.docs[0].data() } as ActionPlan);
+  const plans = snap.docs.map(
+    (d) => ({ id: d.id, ...d.data() } as ActionPlan)
+  );
+  if (plans.length === 1) return backfillIds(plans[0]);
+
+  plans.sort((a, b) => {
+    const aMs = (a.createdAt as Timestamp | null)?.toMillis?.() ?? Infinity;
+    const bMs = (b.createdAt as Timestamp | null)?.toMillis?.() ?? Infinity;
+    return aMs - bMs;
+  });
+  const canonical = plans[0];
+  const seenActionIds = new Set<string>();
+  const seenNoteIds = new Set<string>();
+  const mergedActions: ActionItem[] = [];
+  const mergedNotes: ActionNote[] = [];
+  for (const p of plans) {
+    for (const a of p.actions ?? []) {
+      if (a.id && seenActionIds.has(a.id)) continue;
+      if (a.id) seenActionIds.add(a.id);
+      mergedActions.push(a);
+    }
+    for (const n of p.notes ?? []) {
+      if (n.id && seenNoteIds.has(n.id)) continue;
+      if (n.id) seenNoteIds.add(n.id);
+      mergedNotes.push(n);
+    }
+  }
+  return backfillIds({
+    ...canonical,
+    actions: mergedActions,
+    notes: mergedNotes,
+  });
 }
 
 /** Get all action plans for a company (across all members) */
@@ -78,11 +113,14 @@ export async function createActionPlan(
 export async function addAction(
   companyId: string,
   planId: string,
-  currentActions: ActionItem[],
+  _currentActions: ActionItem[],
   action: ActionItem
 ): Promise<void> {
+  // Atomic append. Using arrayUnion (vs an overwrite of the full array
+  // built from React state) means a stale local snapshot can't drop
+  // existing actions written by a concurrent click or another tab.
   await updateDoc(doc(db, "companies", companyId, "actionPlans", planId), {
-    actions: [...currentActions, action],
+    actions: arrayUnion(action),
     updatedAt: serverTimestamp(),
   });
 }
@@ -101,20 +139,24 @@ export async function updateActions(
 export async function addNote(
   companyId: string,
   planId: string,
-  currentNotes: ActionNote[],
+  _currentNotes: ActionNote[],
   text: string,
-  actionItemId: string | null = null
-): Promise<void> {
+  actionItemId: string | null = null,
+  noteIdOverride?: string
+): Promise<ActionNote> {
+  // Atomic append. See addAction comment above. Caller can pass a
+  // noteIdOverride so its in-memory state and the DB row share an id.
   const newNote: ActionNote = {
-    id: crypto.randomUUID(),
+    id: noteIdOverride ?? crypto.randomUUID(),
     actionItemId,
     text,
     createdAt: Timestamp.now(),
   };
   await updateDoc(doc(db, "companies", companyId, "actionPlans", planId), {
-    notes: [...currentNotes, newNote],
+    notes: arrayUnion(newNote),
     updatedAt: serverTimestamp(),
   });
+  return newNote;
 }
 
 export async function updateNotes(
