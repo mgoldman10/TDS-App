@@ -369,21 +369,50 @@ export default function TeamsPage() {
         );
         if (!ok) return;
       }
+      // Resolve the new leader's uid from the selected display name. If the
+      // selection doesn't map to an app user (legacy free-text path), fall
+      // back to "" — the renderer's leaderName matcher will still nest the
+      // sub-team correctly.
+      const newLeaderName = editTeamLeader.trim();
+      const newLeaderId = newLeaderName
+        ? users.find((u) => u.displayName === newLeaderName)?.uid || ""
+        : "";
+      const oldLeaderId = oldTeam?.leaderId || "";
       await updateTeam(companyId, teamId, {
         name: editTeamName.trim(),
-        leaderName: editTeamLeader.trim(),
+        leaderId: newLeaderId,
+        leaderName: newLeaderName,
         leaderTitle: editTeamLeaderTitle.trim(),
       });
       if (leaderChanged) {
         await logLeaderChangeForTeamMembers(
           companyId, teamId,
-          oldTeam.leaderName, editTeamLeader.trim(),
+          oldTeam.leaderName, newLeaderName,
           profile?.uid || "", todayISO, currentFY, currentFQ
         );
+        // Cascade reportsToUserId for members of this team who reported to
+        // the previous leader, so the new leader can assess them and the
+        // hierarchy stays consistent across the app.
+        const teamMembersToReassign = (members[teamId] || []).filter(
+          (m) => (m.reportsToUserId || "") === oldLeaderId
+        );
+        for (const m of teamMembersToReassign) {
+          await updateTeamMember(companyId, m.id, { reportsToUserId: newLeaderId });
+        }
+        if (teamMembersToReassign.length > 0) {
+          setMembers({
+            ...members,
+            [teamId]: (members[teamId] || []).map((m) =>
+              (m.reportsToUserId || "") === oldLeaderId
+                ? { ...m, reportsToUserId: newLeaderId }
+                : m
+            ),
+          });
+        }
       }
       setTeams(teams.map((t) =>
         t.id === teamId
-          ? { ...t, name: editTeamName.trim(), leaderName: editTeamLeader.trim(), leaderTitle: editTeamLeaderTitle.trim() }
+          ? { ...t, name: editTeamName.trim(), leaderId: newLeaderId, leaderName: newLeaderName, leaderTitle: editTeamLeaderTitle.trim() }
           : t
       ));
       setEditingTeamId(null);
@@ -686,19 +715,48 @@ export default function TeamsPage() {
 
   async function handleDeactivateUser(userId: string) {
     if (!companyId) return;
+    const userDisplayName = users.find((u) => u.uid === userId)?.displayName || "this user";
+    const teamsLed = teams.filter((t) => t.leaderId === userId);
+    if (teamsLed.length > 0) {
+      const list = teamsLed.map((t) => t.name).join(", ");
+      setError(
+        `${userDisplayName} leads: ${list}. Reassign each team's leader before archiving.`
+      );
+      return;
+    }
     if (
       !window.confirm(
-        "Archive this user? They will be removed from this company and can no longer log in here. Their email will become available for a new user."
+        `Archive ${userDisplayName}? They will be removed from this company on every team and can no longer log in here. Their email will become available for a new user.`
       )
     )
       return;
     const result = await deactivateUser(companyId, userId);
     if (result.error) {
-      setError(result.error);
+      if (result.leadingTeams && result.leadingTeams.length > 0) {
+        const list = result.leadingTeams.map((t) => t.name).join(", ");
+        setError(
+          `${userDisplayName} leads: ${list}. Reassign each team's leader before archiving.`
+        );
+      } else {
+        setError(result.error);
+      }
       return;
     }
+    // Mirror the server cascade in local state: drop the user, mark all
+    // their linked team-member rows archived.
     setUsers(users.filter((u) => u.uid !== userId));
     setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== userId));
+    setMembers((prev) => {
+      const next: typeof prev = {};
+      for (const [tid, list] of Object.entries(prev)) {
+        next[tid] = list.map((mm) =>
+          mm.appUserId === userId
+            ? { ...mm, status: "archived" as const, archivedReason: "Archived from company" }
+            : mm
+        );
+      }
+      return next;
+    });
     if (isAdmin) {
       try {
         const archived = await getArchivedUsers(companyId);
@@ -719,7 +777,8 @@ export default function TeamsPage() {
       setError(result.error);
       return;
     }
-    // Reload both active and archived lists
+    // Reload users + archived list. Also refresh team members for every team
+    // we have loaded so cascade-restored rows flip back to active in the UI.
     try {
       const [updated, archived] = await Promise.all([
         getCompanyUsers(companyId),
@@ -727,6 +786,16 @@ export default function TeamsPage() {
       ]);
       setUsers(updated);
       setArchivedUsers(archived);
+      const teamIds = Object.keys(members);
+      if (teamIds.length > 0) {
+        const refreshed: typeof members = {};
+        await Promise.all(
+          teamIds.map(async (tid) => {
+            refreshed[tid] = await getTeamMembers(companyId, tid);
+          })
+        );
+        setMembers(refreshed);
+      }
     } catch {
       // non-fatal
     }
@@ -1003,12 +1072,21 @@ export default function TeamsPage() {
 
   async function handleArchiveMember(memberId: string, teamId: string, reason: string) {
     if (!companyId) return;
+    const m = members[teamId]?.find((x) => x.id === memberId);
+    const reasonText = reason || "Left company";
+    // Linked rows cascade through the user-archive flow so the login,
+    // userMappings, and every team-member row this person owns all flip
+    // archived together — keeping the records consistent.
+    if (m?.isAppUser && m.appUserId) {
+      await cascadeArchivePerson(m.appUserId, reasonText);
+      return;
+    }
     try {
-      await archiveMember(companyId, memberId, reason || "Left company", profile?.uid || "", todayISO, currentFY, currentFQ);
+      await archiveMember(companyId, memberId, reasonText, profile?.uid || "", todayISO, currentFY, currentFQ);
       setMembers({
         ...members,
-        [teamId]: members[teamId].map((m) =>
-          m.id === memberId ? { ...m, status: "archived" as const, archivedReason: reason || "Left company" } : m
+        [teamId]: members[teamId].map((mm) =>
+          mm.id === memberId ? { ...mm, status: "archived" as const, archivedReason: reasonText } : mm
         ),
       });
     } catch { setError("Failed to archive member."); }
@@ -1016,10 +1094,79 @@ export default function TeamsPage() {
 
   async function handleUnarchiveMember(memberId: string, teamId: string) {
     if (!companyId) return;
+    const m = members[teamId]?.find((x) => x.id === memberId);
+    // If linked to a user that's currently archived, cascade-restore so the
+    // login comes back at the same time as the membership row.
+    if (m?.appUserId) {
+      const archivedDoc = archivedUsers.find((au) => au.uid === m.appUserId);
+      if (archivedDoc) {
+        await handleRestoreUser(archivedDoc.archivedDocId);
+        return;
+      }
+    }
     try {
       await unarchiveMember(companyId, memberId, profile?.uid || "", todayISO, currentFY, currentFQ);
-      setMembers({ ...members, [teamId]: members[teamId].map((m) => m.id === memberId ? { ...m, status: "active" as const, archivedAt: null, archivedReason: null } : m) });
+      setMembers({ ...members, [teamId]: members[teamId].map((mm) => mm.id === memberId ? { ...mm, status: "active" as const, archivedAt: null, archivedReason: null } : mm) });
     } catch { setError("Failed to unarchive member."); }
+  }
+
+  /** Cascade-archive a person from this company: their user, all linked
+   *  team-member rows, and their userMappings entry. Blocks if they lead
+   *  any teams (server enforces, client pre-checks for a faster error). */
+  async function cascadeArchivePerson(userId: string, reason: string) {
+    if (!companyId) return;
+    const userDisplayName =
+      users.find((u) => u.uid === userId)?.displayName ||
+      Object.values(members).flat().find((mm) => mm.appUserId === userId)?.name ||
+      "this person";
+    const teamsLed = teams.filter((t) => t.leaderId === userId);
+    if (teamsLed.length > 0) {
+      const list = teamsLed.map((t) => t.name).join(", ");
+      setError(
+        `${userDisplayName} leads: ${list}. Reassign each team's leader before archiving.`
+      );
+      return;
+    }
+    const ok = window.confirm(
+      `Archive ${userDisplayName}? They will be removed from this company on every team and can no longer log in here. Their email will become available for a new user.`
+    );
+    if (!ok) return;
+    const result = await deactivateUser(companyId, userId, reason);
+    if (result.error) {
+      if (result.leadingTeams && result.leadingTeams.length > 0) {
+        const list = result.leadingTeams.map((t) => t.name).join(", ");
+        setError(
+          `${userDisplayName} leads: ${list}. Reassign each team's leader before archiving.`
+        );
+      } else {
+        setError(result.error);
+      }
+      return;
+    }
+    // Update local state: mark every linked member row archived, drop the
+    // user from the active list, refresh archived users.
+    setMembers((prev) => {
+      const next: typeof prev = {};
+      for (const [tid, list] of Object.entries(prev)) {
+        next[tid] = list.map((mm) =>
+          mm.appUserId === userId
+            ? { ...mm, status: "archived" as const, archivedReason: reason }
+            : mm
+        );
+      }
+      return next;
+    });
+    setUsers((prev) => prev.filter((u) => u.uid !== userId));
+    setUnlinkedUsers((prev) => prev.filter((u) => u.uid !== userId));
+    if (isAdmin) {
+      try {
+        const archived = await getArchivedUsers(companyId);
+        setArchivedUsers(archived);
+      } catch {
+        // non-fatal
+      }
+    }
+    closeMemberPanel();
   }
 
   async function handleDeleteMember(memberId: string, teamId: string) {
@@ -1542,13 +1689,18 @@ export default function TeamsPage() {
                                           : "No assessments found. You can archive (preserves the record) or permanently delete (entered in error)."}
                                       </p>
                                     )}
+                                    {m.isAppUser && m.appUserId && (
+                                      <p className="text-[10px] text-primary/50">
+                                        Linked to a user. Archiving will also archive their login and remove them from every team in this company.
+                                      </p>
+                                    )}
                                     <input type="text" value={archiveReason} onChange={(e) => setArchiveReason(e.target.value)}
                                       placeholder="Reason (e.g., Left company, Terminated)"
                                       className="w-full rounded-[4px] border border-brand-gray bg-white px-3 py-1.5 text-sm text-primary outline-none focus:border-primary" />
                                     <div className="flex gap-2 flex-wrap">
                                       <button onClick={() => handleArchiveMember(m.id, team.id, archiveReason)}
                                         className="rounded-[4px] bg-accent px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90">
-                                        Archive Member
+                                        {m.isAppUser && m.appUserId ? "Archive Person" : "Archive Member"}
                                       </button>
                                       {archiveMemberHasAssessments === false && (
                                         <button onClick={() => handleDeleteMember(m.id, team.id)}

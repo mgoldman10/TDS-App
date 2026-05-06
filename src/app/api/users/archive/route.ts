@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const { companyId, userId } = await request.json();
+    const { companyId, userId, reason } = await request.json();
 
     if (!companyId || !userId) {
       return NextResponse.json(
@@ -22,9 +22,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found." }, { status: 404 });
     }
 
+    // Block the archive if this user leads any teams. Forces an explicit
+    // leadership reassignment first — otherwise a sub-team would be left
+    // pointing at an archived leader and visually orphaned.
+    const ledTeamsSnap = await adminDb
+      .collection("companies")
+      .doc(companyId)
+      .collection("teams")
+      .where("leaderId", "==", userId)
+      .get();
+    if (!ledTeamsSnap.empty) {
+      const leadingTeams = ledTeamsSnap.docs.map((d) => ({
+        id: d.id,
+        name: (d.data().name as string) || "(unnamed team)",
+      }));
+      return NextResponse.json(
+        {
+          error: "User leads one or more teams. Reassign leadership first.",
+          leadingTeams,
+        },
+        { status: 409 }
+      );
+    }
+
     const data = userSnap.data() ?? {};
     const originalEmail = data.email ?? null;
     const now = new Date();
+    const archiveReason =
+      typeof reason === "string" && reason.trim()
+        ? reason.trim()
+        : "Archived from company";
 
     // Pick an archive slot. One per uid; on re-archive, append timestamp.
     let archiveDocId = userId;
@@ -50,9 +77,9 @@ export async function POST(request: NextRequest) {
     });
     batch.delete(userRef);
 
-    // Clear app-user link on any team members that point to this uid.
-    // The team member record itself stays — it's the historical anchor for
-    // assessments — but it no longer claims to have a login.
+    // Cascade: archive every team-member row linked to this user. Keep
+    // appUserId set so restore can flip them back to active without
+    // having to re-link by name.
     const linkedMembersSnap = await adminDb
       .collection("companies")
       .doc(companyId)
@@ -60,7 +87,12 @@ export async function POST(request: NextRequest) {
       .where("appUserId", "==", userId)
       .get();
     for (const memberDoc of linkedMembersSnap.docs) {
-      batch.update(memberDoc.ref, { isAppUser: false, appUserId: null });
+      batch.update(memberDoc.ref, {
+        status: "archived",
+        archivedAt: now,
+        archivedReason: archiveReason,
+        updatedAt: now,
+      });
     }
 
     await batch.commit();
@@ -92,7 +124,11 @@ export async function POST(request: NextRequest) {
       await mappingRef.update(updates);
     }
 
-    return NextResponse.json({ success: true, archiveDocId });
+    return NextResponse.json({
+      success: true,
+      archiveDocId,
+      archivedMemberCount: linkedMembersSnap.size,
+    });
   } catch (err) {
     console.error("Archive user error:", err);
     const message =

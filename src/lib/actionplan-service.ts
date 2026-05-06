@@ -18,16 +18,34 @@ function plansRef(companyId: string) {
   return collection(db, "companies", companyId, "actionPlans");
 }
 
-function backfillIds(plan: ActionPlan): ActionPlan {
-  const actions = (plan.actions ?? []).map((a) =>
-    a.id ? a : { ...a, id: crypto.randomUUID() }
-  );
-  const notes = (plan.notes ?? []).map((n) =>
-    n.id
-      ? { ...n, actionItemId: n.actionItemId ?? null }
-      : { ...n, id: crypto.randomUUID(), actionItemId: n.actionItemId ?? null }
-  );
-  return { ...plan, actions, notes };
+function backfillIds(plan: ActionPlan): {
+  plan: ActionPlan;
+  changed: boolean;
+} {
+  let changed = false;
+  const actions = (plan.actions ?? []).map((a) => {
+    if (a.id) return a;
+    changed = true;
+    return { ...a, id: crypto.randomUUID() };
+  });
+  const actionIds = new Set(actions.map((a) => a.id));
+  const notes = (plan.notes ?? []).map((n) => {
+    const next: ActionNote = {
+      ...n,
+      id: n.id || crypto.randomUUID(),
+      actionItemId: n.actionItemId ?? null,
+    };
+    if (!n.id) changed = true;
+    // Drop dead links — a linked note whose target action no longer exists
+    // (e.g., the action was id-less and got a fresh id this session). Better
+    // to surface as a general note than vanish.
+    if (next.actionItemId && !actionIds.has(next.actionItemId)) {
+      next.actionItemId = null;
+      changed = true;
+    }
+    return next;
+  });
+  return { plan: { ...plan, actions, notes }, changed };
 }
 
 /**
@@ -50,7 +68,11 @@ export async function getActionPlanForMember(
   const plans = snap.docs.map(
     (d) => ({ id: d.id, ...d.data() } as ActionPlan)
   );
-  if (plans.length === 1) return backfillIds(plans[0]);
+  if (plans.length === 1) {
+    const { plan: filled, changed } = backfillIds(plans[0]);
+    if (changed) await persistRepair(companyId, filled);
+    return filled;
+  }
 
   plans.sort((a, b) => {
     const aMs = (a.createdAt as Timestamp | null)?.toMillis?.() ?? Infinity;
@@ -74,11 +96,35 @@ export async function getActionPlanForMember(
       mergedNotes.push(n);
     }
   }
-  return backfillIds({
+  const { plan: filled, changed } = backfillIds({
     ...canonical,
     actions: mergedActions,
     notes: mergedNotes,
   });
+  if (changed) await persistRepair(companyId, filled);
+  return filled;
+}
+
+/**
+ * One-time self-repair: write back stable IDs and re-pointed notes so the
+ * next read sees the same shape. Without this, id-less actions get a fresh
+ * random UUID on every load and any linked notes silently lose their target.
+ */
+async function persistRepair(
+  companyId: string,
+  plan: ActionPlan
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, "companies", companyId, "actionPlans", plan.id), {
+      actions: plan.actions,
+      notes: plan.notes,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    // Non-fatal: the in-memory plan is correct for this session even if
+    // persistence fails. Log so we notice repeated drift in production.
+    console.warn("Action plan repair failed", { planId: plan.id, err });
+  }
 }
 
 /** Get all action plans for a company (across all members) */
@@ -90,7 +136,9 @@ export async function getAllActionPlans(
     orderBy("memberName", "asc")
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => backfillIds({ id: d.id, ...d.data() } as ActionPlan));
+  return snap.docs.map(
+    (d) => backfillIds({ id: d.id, ...d.data() } as ActionPlan).plan
+  );
 }
 
 export async function createActionPlan(

@@ -60,22 +60,34 @@ export async function createUserMapping(
 }
 
 /**
- * Archive a user from a company. Removes them from this company's user list,
- * deletes their per-company membership entry, and preserves their record at
- * /companies/{cid}/usersArchived/{uid}. Does NOT touch Firebase Auth, so the
- * user can still log in to other companies they belong to.
+ * Archive a user from a company. Cascades:
+ *  - Moves the user record to /companies/{cid}/usersArchived/{uid}
+ *  - Archives every team-member row linked to this uid (status: archived)
+ *  - Removes the company from userMappings.memberships → no login here
+ *
+ * Blocks (returns leadingTeams) if the user leads any teams in this company —
+ * leadership must be reassigned first. Does NOT touch Firebase Auth, so a
+ * user with memberships in other companies can still log in there.
  */
 export async function deactivateUser(
   companyId: string,
-  userId: string
-): Promise<{ error?: string }> {
+  userId: string,
+  reason?: string
+): Promise<{ error?: string; leadingTeams?: { id: string; name: string }[] }> {
   const res = await fetch("/api/users/archive", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ companyId, userId }),
+    body: JSON.stringify({ companyId, userId, reason }),
   });
   const data = await res.json();
-  if (!res.ok) return { error: data.error ?? "Failed to archive user." };
+  if (!res.ok) {
+    return {
+      error: data.error ?? "Failed to archive user.",
+      leadingTeams: Array.isArray(data.leadingTeams)
+        ? data.leadingTeams
+        : undefined,
+    };
+  }
   return {};
 }
 

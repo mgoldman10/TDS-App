@@ -83,9 +83,30 @@ export async function POST(request: NextRequest) {
     restoredData.isActive = true;
     restoredData.uid = uid;
 
+    // Cascade: un-archive every team-member row linked to this uid that's
+    // currently archived. Keeps the restore symmetric with the cascade
+    // archive — the person comes back as a member of the same teams.
+    const linkedMembersSnap = await adminDb
+      .collection("companies")
+      .doc(companyId)
+      .collection("teamMembers")
+      .where("appUserId", "==", uid)
+      .get();
+    const archivedLinkedMembers = linkedMembersSnap.docs.filter(
+      (d) => (d.data().status ?? "active") === "archived"
+    );
+
     const batch = adminDb.batch();
     batch.set(userRef, restoredData);
     batch.delete(archiveRef);
+    for (const memberDoc of archivedLinkedMembers) {
+      batch.update(memberDoc.ref, {
+        status: "active",
+        archivedAt: null,
+        archivedReason: null,
+        updatedAt: now,
+      });
+    }
     await batch.commit();
 
     // Update userMappings: append membership for this company.
@@ -116,7 +137,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ success: true, uid });
+    return NextResponse.json({
+      success: true,
+      uid,
+      restoredMemberCount: archivedLinkedMembers.length,
+    });
   } catch (err) {
     console.error("Restore user error:", err);
     const message =
