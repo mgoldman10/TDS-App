@@ -126,10 +126,16 @@ export default function CoreValuesPage() {
 
   async function handleDelete(cvId: string) {
     if (!companyId || !canEdit) return;
-    if (!window.confirm("Delete this core value?")) return;
+    const cv = coreValues.find((c) => c.id === cvId);
+    const name = cv?.name?.trim() || "this core value";
+    const message =
+      `Delete the core value "${name}"? This cannot be undone.\n\n` +
+      `Past assessments that scored team members on this value will keep their recorded scores, ` +
+      `but the value will no longer appear when assessing team members going forward.`;
+    if (!window.confirm(message)) return;
     try {
       await deleteCoreValue(companyId, cvId);
-      setCoreValues(coreValues.filter((cv) => cv.id !== cvId));
+      setCoreValues(coreValues.filter((c) => c.id !== cvId));
       if (expandedId === cvId) {
         setExpandedId(null);
         setEditing(null);
@@ -195,6 +201,15 @@ export default function CoreValuesPage() {
                 <span className="text-[10px] text-primary/30">
                   {cv.behaviors.length} behavior{cv.behaviors.length !== 1 ? "s" : ""}
                 </span>
+                {canEdit && (
+                  <button
+                    onClick={() => handleDelete(cv.id)}
+                    className="text-red-500 transition hover:text-red-700"
+                    title="Delete core value" aria-label="Delete core value"
+                  >
+                    <TrashIcon />
+                  </button>
+                )}
                 <button
                   onClick={() => expandCard(cv)}
                   className="px-1 text-sm text-primary/50"
@@ -308,12 +323,6 @@ export default function CoreValuesPage() {
                       className="rounded-[4px] bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50"
                     >
                       {saving ? "Saving..." : "Save"}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(cv.id)}
-                      className="rounded-[4px] border-[1.5px] border-accent bg-transparent px-4 py-2 text-xs font-semibold uppercase tracking-wider text-accent transition hover:bg-accent hover:text-white"
-                    >
-                      Delete
                     </button>
                   </div>
                 </div>

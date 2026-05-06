@@ -31,6 +31,10 @@ export default function AdminPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
+  // Per-card actions menu (kebab). Holds the id of the company whose
+  // menu is currently open, or null if none.
+  const [menuOpenCompanyId, setMenuOpenCompanyId] = useState<string | null>(null);
+
   // Superadmin creation
   const [showSuperadminForm, setShowSuperadminForm] = useState(false);
   const [saName, setSaName] = useState("");
@@ -46,6 +50,18 @@ export default function AdminPage() {
     }
     loadAll();
   }, [profile, router]);
+
+  // Close the kebab menu on any outside click.
+  useEffect(() => {
+    if (!menuOpenCompanyId) return;
+    const handler = (e: MouseEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && el.closest("[data-card-menu]")) return;
+      setMenuOpenCompanyId(null);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpenCompanyId]);
 
   async function loadAll() {
     try {
@@ -250,6 +266,7 @@ export default function AdminPage() {
         <div className="mt-6 grid gap-4 md:grid-cols-2">
           {visibleCompanies.map((c) => {
             const isBusy = busyCompanyId === c.id;
+            const menuOpen = menuOpenCompanyId === c.id;
             return (
               <div
                 key={c.id}
@@ -268,48 +285,73 @@ export default function AdminPage() {
                       </p>
                     )}
                   </div>
-                  {!showArchived && (
-                    <button
-                      onClick={() => handleSelect(c.id)}
-                      className="text-sm font-semibold text-accent transition hover:opacity-70"
-                    >
-                      Select →
-                    </button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {!showArchived && (
+                      <button
+                        onClick={() => handleSelect(c.id)}
+                        className="text-sm font-semibold text-accent transition hover:opacity-70"
+                      >
+                        Select →
+                      </button>
+                    )}
+                    {!showArchived && (
+                      <div className="relative" data-card-menu>
+                        <button
+                          type="button"
+                          onClick={() => setMenuOpenCompanyId(menuOpen ? null : c.id)}
+                          disabled={isBusy}
+                          aria-label="More actions"
+                          aria-haspopup="menu"
+                          aria-expanded={menuOpen}
+                          className="rounded-[4px] px-1.5 py-0.5 text-lg leading-none text-primary/40 transition hover:bg-primary/[0.06] hover:text-primary disabled:opacity-50"
+                        >
+                          ⋮
+                        </button>
+                        {menuOpen && (
+                          <div
+                            role="menu"
+                            className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-[4px] border border-brand-gray bg-white shadow-lg"
+                          >
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => { setMenuOpenCompanyId(null); handleArchive(c); }}
+                              className="block w-full px-3 py-2 text-left text-xs font-semibold uppercase tracking-wider text-primary transition hover:bg-primary/[0.04]"
+                            >
+                              Archive
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div className="mt-4 flex gap-3 border-t border-brand-gray/50 pt-3">
-                  {showArchived ? (
-                    <>
-                      <button
-                        onClick={() => handleRestore(c)}
-                        disabled={isBusy}
-                        className="text-xs font-semibold uppercase tracking-wider text-primary hover:text-accent disabled:opacity-50"
-                      >
-                        {isBusy ? "Working..." : "Restore"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setDeletingCompany(c);
-                          setDeleteConfirmInput("");
-                          setDeleteError("");
-                        }}
-                        disabled={isBusy}
-                        className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-70 disabled:opacity-50"
-                      >
-                        Delete permanently
-                      </button>
-                    </>
-                  ) : (
+                {showArchived && (
+                  <div className="mt-4 flex gap-3 border-t border-brand-gray/50 pt-3">
                     <button
-                      onClick={() => handleArchive(c)}
+                      onClick={() => handleRestore(c)}
                       disabled={isBusy}
-                      className="text-xs font-semibold uppercase tracking-wider text-primary/60 hover:text-accent disabled:opacity-50"
+                      className="text-xs font-semibold uppercase tracking-wider text-primary hover:text-accent disabled:opacity-50"
                     >
-                      {isBusy ? "Archiving..." : "Archive"}
+                      {isBusy ? "Working..." : "Restore"}
                     </button>
-                  )}
-                </div>
+                    <button
+                      onClick={() => {
+                        setDeletingCompany(c);
+                        setDeleteConfirmInput("");
+                        setDeleteError("");
+                      }}
+                      disabled={isBusy}
+                      className="text-xs font-semibold uppercase tracking-wider text-accent hover:opacity-70 disabled:opacity-50"
+                    >
+                      Delete permanently
+                    </button>
+                  </div>
+                )}
+                {!showArchived && isBusy && (
+                  <p className="mt-2 text-xs text-primary/40">Archiving...</p>
+                )}
               </div>
             );
           })}

@@ -348,7 +348,11 @@ export default function TeamsPage() {
     setEditingTeamId(team.id);
     setEditTeamName(team.name);
     setEditTeamLeader(team.leaderName || "");
-    setEditTeamLeaderTitle(team.leaderTitle || "");
+    // Prefer the leader's live profile title; fall back to the team's
+    // stored leaderTitle so we don't lose anything if the leader has
+    // no member record (rare/legacy data).
+    const liveTitle = team.leaderName ? findPersonTitle(team.leaderName) : "";
+    setEditTeamLeaderTitle(liveTitle || team.leaderTitle || "");
   }
 
   async function handleSaveTeam(teamId: string) {
@@ -1096,12 +1100,17 @@ export default function TeamsPage() {
               <span className={`font-semibold text-primary ${isTopLevel ? "text-base" : "text-sm"}`}>
                 {team.name}
               </span>
-              {team.leaderName && (
-                <span className="text-xs text-primary/40">
-                  Led by {team.leaderName}
-                  {team.leaderTitle && <span className="text-primary/30"> · {team.leaderTitle}</span>}
-                </span>
-              )}
+              {team.leaderName && (() => {
+                // Prefer the leader's live profile title over the team's
+                // possibly-stale leaderTitle cache.
+                const displayTitle = findPersonTitle(team.leaderName) || team.leaderTitle || "";
+                return (
+                  <span className="text-xs text-primary/40">
+                    Led by {team.leaderName}
+                    {displayTitle && <span className="text-primary/30"> · {displayTitle}</span>}
+                  </span>
+                );
+              })()}
               <span className="text-[10px] text-primary/30">
                 {totalMembers} member{totalMembers !== 1 ? "s" : ""}
                 {childTeams.length > 0 ? ` · ${childTeams.length} sub-team${childTeams.length !== 1 ? "s" : ""}` : ""}
@@ -1156,9 +1165,10 @@ export default function TeamsPage() {
                 </div>
                 <div>
                   <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Leader Title</label>
-                  <input type="text" value={editTeamLeaderTitle} onChange={(e) => setEditTeamLeaderTitle(e.target.value)}
-                    placeholder="e.g., VP Finance"
-                    className="mt-1 w-full rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm text-primary outline-none focus:border-primary" />
+                  <div className="mt-1 rounded-[4px] border border-brand-gray bg-primary/[0.03] px-3 py-2 text-sm text-primary/80 min-h-[38px] flex items-center">
+                    {editTeamLeaderTitle.trim() || <span className="text-primary/30">—</span>}
+                  </div>
+                  <p className="mt-1 text-[10px] text-primary/40">Title is changed from the member&apos;s profile.</p>
                 </div>
               </div>
               <div className="flex gap-2">
@@ -1200,7 +1210,17 @@ export default function TeamsPage() {
                   the consolidated edit panel for that person. */}
               {teamMembers.length > 0 && (
                 <div className={`space-y-1 ${leaderMembers.length > 0 ? "mt-1" : ""}`}>
-                  {[...teamMembers].sort((a, b) => a.name.localeCompare(b.name)).map((m) => {
+                  {[...teamMembers].sort((a, b) => {
+                    const aIsLeader =
+                      (!!team.leaderId && a.appUserId === team.leaderId) ||
+                      (!team.leaderId && !!team.leaderName && a.name === team.leaderName);
+                    const bIsLeader =
+                      (!!team.leaderId && b.appUserId === team.leaderId) ||
+                      (!team.leaderId && !!team.leaderName && b.name === team.leaderName);
+                    if (aIsLeader && !bIsLeader) return -1;
+                    if (bIsLeader && !aIsLeader) return 1;
+                    return a.name.localeCompare(b.name);
+                  }).map((m) => {
                     const isPanelOpen = openEditPanelId === m.id;
                     const isArchived = m.status === "archived";
                     const leadsTeams = teams.filter((t) => t.leaderId && m.appUserId && t.leaderId === m.appUserId);
