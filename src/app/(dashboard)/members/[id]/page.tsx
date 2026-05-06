@@ -25,6 +25,7 @@ import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { formatNumber } from "@/lib/formatNumber";
 import NumericInput from "@/components/NumericInput";
 import UserAvatar from "@/components/UserAvatar";
+import TrashIcon from "@/components/TrashIcon";
 import type { TeamMember, Team, TeamMemberChange } from "@/types/team";
 import type { Assessment, CultureFitRating, CultureFitScore, ProductivityActual, PerformanceCategory } from "@/types/assessment";
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues, NullableMonthlyValues } from "@/types/productivity";
@@ -726,7 +727,7 @@ export default function MemberSummaryPage() {
         {!isArchived && (
           <>
             <button onClick={() => startEditNote(n.id)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit note">✎</button>
-            <button onClick={() => handleDeleteNote(n.id)} className="text-xs text-red-500 transition hover:text-red-700" title="Delete note">✕</button>
+            <button onClick={() => handleDeleteNote(n.id)} className="text-red-500 transition hover:text-red-700" title="Delete note" aria-label="Delete note"><TrashIcon /></button>
           </>
         )}
       </div>
@@ -904,7 +905,7 @@ export default function MemberSummaryPage() {
                       </select>
                       {a.targetDate && <span className={`text-xs whitespace-nowrap ${a.targetDate < now.toISOString().split("T")[0] ? "text-accent" : "text-primary/40"}`}>Due: {new Date(a.targetDate + "T00:00:00").toLocaleDateString()}</span>}
                       {!isArchived && <button onClick={() => startEditAction(a.id)} className="text-xs text-primary/30 transition hover:text-primary" title="Edit action">✎</button>}
-                      {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-red-500 transition hover:text-red-700" title="Delete action">✕</button>}
+                      {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-red-500 transition hover:text-red-700" title="Delete action" aria-label="Delete action"><TrashIcon /></button>}
                     </div>
                     {renderLinkedNoteThread(a.id)}
                   </div>
@@ -919,7 +920,7 @@ export default function MemberSummaryPage() {
                         <input type="checkbox" checked={true} disabled={isArchived} onChange={() => handleToggleAction(a.id)} className="h-4 w-4 accent-green-500" />
                         <span className="flex-1 text-sm text-primary line-through">{a.description}</span>
                         {a.owner && <span className="text-[10px] text-primary/30">{a.owner}</span>}
-                        {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-xs text-red-500 transition hover:text-red-700" title="Delete action">✕</button>}
+                        {!isArchived && <button onClick={() => handleDeleteAction(a.id)} className="text-red-500 transition hover:text-red-700" title="Delete action" aria-label="Delete action"><TrashIcon /></button>}
                       </div>
                       {renderLinkedNoteThread(a.id)}
                     </div>
@@ -1222,7 +1223,7 @@ export default function MemberSummaryPage() {
                       <span className="ml-2 text-xs text-primary/40">{t.weight}% · {t.type === "bigger" ? "Bigger" : "Smaller"} · {t.frequency === "monthly" ? "Monthly" : "Quarterly"}</span>
                     </button>
                     <button onClick={() => setExpandedTargetId(expandedTargetId === t.id ? null : t.id)} className="text-sm text-primary/50">{expandedTargetId === t.id ? "▲" : "▼"}</button>
-                    {!isArchived && <button onClick={() => handleDeleteTarget(t.id)} className="text-xs text-red-500 transition hover:text-red-700">✕</button>}
+                    {!isArchived && <button onClick={() => handleDeleteTarget(t.id)} className="text-red-500 transition hover:text-red-700" title="Delete target" aria-label="Delete target"><TrashIcon /></button>}
                   </div>
                   {expandedTargetId === t.id && (
                     <TargetEditor target={t} onSave={(u) => handleSaveTarget(t.id, u)} saving={targetSaving} readOnly={isArchived} />

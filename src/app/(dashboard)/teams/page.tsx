@@ -31,6 +31,7 @@ import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { Team, TeamMember } from "@/types/team";
 import type { UserProfile, UserRole } from "@/types/auth";
+import TrashIcon from "@/components/TrashIcon";
 
 const ROLE_LABELS: Record<UserRole, string> = {
   superadmin: "Super Admin",
@@ -741,10 +742,18 @@ export default function TeamsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, displayName }),
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Failed to send password reset email.");
+        return;
+      }
       alert(`Password reset email sent to ${email}`);
-    } catch {
-      setError("Failed to send password reset email.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to send password reset email."
+      );
     }
   }
 
@@ -1107,8 +1116,9 @@ export default function TeamsPage() {
             )}
             {canManage && !isTopLevel && (
               <button onClick={() => handleDeleteTeam(team.id)}
-                className="text-xs text-red-500 transition hover:text-red-700">
-                ✕
+                className="text-red-500 transition hover:text-red-700"
+                title="Delete team" aria-label="Delete team">
+                <TrashIcon />
               </button>
             )}
           </div>

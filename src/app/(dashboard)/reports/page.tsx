@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -14,7 +14,7 @@ import { getAuthorizedMemberIds } from "@/lib/team-auth";
 import { updateCompany } from "@/lib/company-service";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
 import { DEFAULT_SCORING_PARAMETERS } from "@/types/company";
-import type { TdiGoals } from "@/types/company";
+import type { TdiGoals, QuarterlyTdiGoal } from "@/types/company";
 import TalentGrid from "@/components/TalentGrid";
 import type { Assessment, PerformanceCategory } from "@/types/assessment";
 import { CATEGORY_COLORS } from "@/types/assessment";
@@ -40,6 +40,89 @@ function categoryCounts(assessments: Assessment[]): Record<PerformanceCategory, 
     if (a.performanceCategory in counts) counts[a.performanceCategory]++;
   }
   return counts;
+}
+
+function MultiSelectDropdown({
+  label,
+  options,
+  selectedValues,
+  onChange,
+  allLabel = "All",
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  selectedValues: string[];
+  onChange: (values: string[]) => void;
+  allLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const summary =
+    selectedValues.length === 0
+      ? allLabel
+      : selectedValues.length === 1
+      ? options.find((o) => o.value === selectedValues[0])?.label ?? "1 selected"
+      : `${selectedValues.length} selected`;
+
+  const toggle = (value: string) => {
+    if (selectedValues.includes(value)) {
+      onChange(selectedValues.filter((v) => v !== value));
+    } else {
+      onChange([...selectedValues, value]);
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">{label}</label>
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="mt-1 flex min-w-[180px] items-center justify-between rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm font-semibold text-primary outline-none transition hover:border-primary/40 focus:border-primary"
+      >
+        <span className="truncate">{summary}</span>
+        <span className="ml-2 text-[10px] text-primary/40">▼</span>
+      </button>
+      {open && (
+        <div className="absolute z-20 mt-1 max-h-64 w-64 overflow-y-auto rounded-[4px] border border-brand-gray bg-white shadow-lg">
+          <label className="flex items-center gap-2 px-3 py-2 text-sm text-primary cursor-pointer hover:bg-primary/[0.04]">
+            <input
+              type="checkbox"
+              checked={selectedValues.length === 0}
+              onChange={() => onChange([])}
+              className="h-4 w-4 rounded border-brand-gray accent-accent"
+            />
+            {allLabel}
+          </label>
+          <div className="border-t border-brand-gray/30" />
+          {options.map((opt) => (
+            <label
+              key={opt.value}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-primary cursor-pointer hover:bg-primary/[0.04]"
+            >
+              <input
+                type="checkbox"
+                checked={selectedValues.includes(opt.value)}
+                onChange={() => toggle(opt.value)}
+                className="h-4 w-4 rounded border-brand-gray accent-accent"
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 
@@ -72,17 +155,24 @@ export default function ReportsPage() {
   const [snapYear, setSnapYear] = useState(currentFY);
   const [snapQuarter, setSnapQuarter] = useState(currentFQ);
   const [snapAssessments, setSnapAssessments] = useState<Assessment[]>([]);
-  const [snapTeamFilter, setSnapTeamFilter] = useState("");
+  // Empty array = "All Teams"; otherwise restrict to these team ids.
+  const [snapTeamFilter, setSnapTeamFilter] = useState<string[]>([]);
   const [snapLoading, setSnapLoading] = useState(false);
 
   // Comparisons state
   const [sortCol, setSortCol] = useState<string>("tdi");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [compYear, setCompYear] = useState(currentFY);
+  const [compQuarter, setCompQuarter] = useState(currentFQ);
+  const [compTeamFilter, setCompTeamFilter] = useState<string[]>([]);
 
   // Goals state
   const [tdiGoals, setTdiGoals] = useState<TdiGoals>({});
   const [goalSaving, setGoalSaving] = useState(false);
-  const [companyGoalStr, setCompanyGoalStr] = useState("");
+  // Quarter being viewed/edited on the Goals tab. Defaults to current.
+  const [goalsYear, setGoalsYear] = useState(currentFY);
+  const [goalsQuarter, setGoalsQuarter] = useState(currentFQ);
+  const [bulkGoalStr, setBulkGoalStr] = useState("");
 
   const yearOptions = Array.from({ length: 5 }, (_, i) => currentFY + 1 - i);
 
@@ -113,9 +203,7 @@ export default function ReportsPage() {
       setMembers(memberData);
       setChanges([...teamChanges, ...leaderChanges].filter((c) => authMemberIds.has(c.memberId)));
 
-      const goals = activeCompany?.tdiGoals ?? {};
-      setTdiGoals(goals);
-      setCompanyGoalStr(goals.company != null ? String(goals.company) : "");
+      setTdiGoals(activeCompany?.tdiGoals ?? {});
 
       // Load initial snapshot
       await loadSnapshot(currentFY, currentFQ, filteredAssessments);
@@ -201,10 +289,15 @@ export default function ReportsPage() {
 
   // Comparison data
   function buildComparisonData() {
-    const currentQuarterAssessments = allAssessments.filter((a) => a.fiscalYear === currentFY && a.fiscalQuarter === currentFQ);
-    return teams.map((t) => {
+    const quarterAssessments = allAssessments.filter(
+      (a) => a.fiscalYear === compYear && a.fiscalQuarter === compQuarter
+    );
+    const teamsToShow = compTeamFilter.length > 0
+      ? teams.filter((t) => compTeamFilter.includes(t.id))
+      : teams;
+    return teamsToShow.map((t) => {
       const teamMemberIds = new Set(members.filter((m) => m.teamId === t.id).map((m) => m.id));
-      const teamAssessments = currentQuarterAssessments.filter((a) => teamMemberIds.has(a.memberId));
+      const teamAssessments = quarterAssessments.filter((a) => teamMemberIds.has(a.memberId));
       const counts = categoryCounts(teamAssessments);
       const total = teamAssessments.length;
       return {
@@ -231,12 +324,22 @@ export default function ReportsPage() {
 
   const comparisonData = buildComparisonData();
 
-  // Goals: current TDI per team
-  function getCurrentTdi(teamId?: string): number {
-    const currentQ = allAssessments.filter((a) => a.fiscalYear === currentFY && a.fiscalQuarter === currentFQ);
-    if (!teamId) return calcTdi(currentQ);
+  // Goals: TDI for any quarter, optionally scoped to a team
+  function getTdiForQuarter(fy: number, fq: number, teamId?: string): number {
+    const qAssessments = allAssessments.filter((a) => a.fiscalYear === fy && a.fiscalQuarter === fq);
+    if (!teamId) return calcTdi(qAssessments);
     const teamMemberIds = new Set(members.filter((m) => m.teamId === teamId).map((m) => m.id));
-    return calcTdi(currentQ.filter((a) => teamMemberIds.has(a.memberId)));
+    return calcTdi(qAssessments.filter((a) => teamMemberIds.has(a.memberId)));
+  }
+
+  function quarterHasAssessments(fy: number, fq: number, teamId?: string): boolean {
+    const found = allAssessments.find((a) => a.fiscalYear === fy && a.fiscalQuarter === fq);
+    if (!found) return false;
+    if (!teamId) return true;
+    const teamMemberIds = new Set(members.filter((m) => m.teamId === teamId).map((m) => m.id));
+    return allAssessments.some(
+      (a) => a.fiscalYear === fy && a.fiscalQuarter === fq && teamMemberIds.has(a.memberId)
+    );
   }
 
   function goalStatus(current: number, goal: number | undefined): "green" | "yellow" | "red" | "none" {
@@ -244,6 +347,90 @@ export default function ReportsPage() {
     if (current >= goal) return "green";
     if (current >= goal - 10) return "yellow";
     return "red";
+  }
+
+  // ---- Goals helpers (per-quarter) ----
+  const quarterKey = (fy: number, fq: number) => `${fy}-${fq}`;
+  const nextFq = currentFQ === 4 ? 1 : currentFQ + 1;
+  const nextFy = currentFQ === 4 ? currentFY + 1 : currentFY;
+  const selectedKey = quarterKey(goalsYear, goalsQuarter);
+
+  function getGoalForQuarter(fy: number, fq: number): QuarterlyTdiGoal {
+    const stored = tdiGoals.quarterly?.[quarterKey(fy, fq)];
+    if (stored) return stored;
+    // Fall back to legacy flat fields so existing data stays applied
+    // until the user saves a quarter-specific value over it.
+    return { company: tdiGoals.company, teams: tdiGoals.teams };
+  }
+
+  const selectedGoal = getGoalForQuarter(goalsYear, goalsQuarter);
+  const selectedCompanyGoal = selectedGoal.company;
+  const selectedTeamGoals = selectedGoal.teams ?? {};
+
+  // Build the list of quarters to surface in the selector: every quarter
+  // we have assessments for, every quarter that already has a goal, plus
+  // current and next. De-duped and sorted oldest → newest.
+  const quarterEntries: { fy: number; fq: number; key: string; sortKey: number }[] = [];
+  const seenKeys = new Set<string>();
+  function pushQuarter(fy: number, fq: number) {
+    const key = quarterKey(fy, fq);
+    if (seenKeys.has(key)) return;
+    seenKeys.add(key);
+    quarterEntries.push({ fy, fq, key, sortKey: fy * 10 + fq });
+  }
+  for (const a of allAssessments) pushQuarter(a.fiscalYear, a.fiscalQuarter);
+  for (const k of Object.keys(tdiGoals.quarterly ?? {})) {
+    const [fy, fq] = k.split("-").map(Number);
+    if (!Number.isNaN(fy) && !Number.isNaN(fq)) pushQuarter(fy, fq);
+  }
+  pushQuarter(currentFY, currentFQ);
+  pushQuarter(nextFy, nextFq);
+  quarterEntries.sort((a, b) => a.sortKey - b.sortKey);
+
+  function quarterLabel(fy: number, fq: number): string {
+    const isCurrent = fy === currentFY && fq === currentFQ;
+    const isNext = fy === nextFy && fq === nextFq;
+    return `Q${fq} FY${fy}${isCurrent ? " (current)" : isNext ? " (next)" : ""}`;
+  }
+
+  function updateCompanyGoal(raw: string) {
+    if (raw !== "" && Number.isNaN(Number(raw)) && raw !== "-") return;
+    setTdiGoals((prev) => {
+      const quarterly = { ...(prev.quarterly ?? {}) };
+      const entry = { ...(quarterly[selectedKey] ?? {}) };
+      if (raw === "" || raw === "-") delete entry.company;
+      else entry.company = parseInt(raw) || 0;
+      quarterly[selectedKey] = entry;
+      return { ...prev, quarterly };
+    });
+  }
+
+  function updateTeamGoal(teamId: string, raw: string) {
+    if (raw !== "" && Number.isNaN(Number(raw)) && raw !== "-") return;
+    setTdiGoals((prev) => {
+      const quarterly = { ...(prev.quarterly ?? {}) };
+      const entry = { ...(quarterly[selectedKey] ?? {}) };
+      const teamsMap = { ...(entry.teams ?? {}) };
+      if (raw === "" || raw === "-") delete teamsMap[teamId];
+      else teamsMap[teamId] = parseInt(raw) || 0;
+      entry.teams = teamsMap;
+      quarterly[selectedKey] = entry;
+      return { ...prev, quarterly };
+    });
+  }
+
+  function applyBulkGoal() {
+    if (bulkGoalStr === "") return;
+    const num = parseInt(bulkGoalStr) || 0;
+    setTdiGoals((prev) => {
+      const quarterly = { ...(prev.quarterly ?? {}) };
+      const entry = { ...(quarterly[selectedKey] ?? {}) };
+      const teamsMap = { ...(entry.teams ?? {}) };
+      for (const t of teams) teamsMap[t.id] = num;
+      entry.teams = teamsMap;
+      quarterly[selectedKey] = entry;
+      return { ...prev, quarterly };
+    });
   }
 
   async function handleSaveGoals() {
@@ -258,10 +445,10 @@ export default function ReportsPage() {
   }
 
   // Snapshot filtered
-  const filteredSnapAssessments = snapTeamFilter
+  const filteredSnapAssessments = snapTeamFilter.length > 0
     ? snapAssessments.filter((a) => {
         const m = members.find((m) => m.id === a.memberId);
-        return m && m.teamId === snapTeamFilter;
+        return m && snapTeamFilter.includes(m.teamId);
       })
     : snapAssessments;
 
@@ -351,14 +538,13 @@ export default function ReportsPage() {
                   {[1, 2, 3, 4].map((q) => <option key={q} value={q}>Q{q}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Team</label>
-                <select value={snapTeamFilter} onChange={(e) => setSnapTeamFilter(e.target.value)}
-                  className="mt-1 block rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm font-semibold text-primary outline-none focus:border-primary">
-                  <option value="">All Teams</option>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
+              <MultiSelectDropdown
+                label="Teams"
+                options={teams.map((t) => ({ value: t.id, label: t.name }))}
+                selectedValues={snapTeamFilter}
+                onChange={setSnapTeamFilter}
+                allLabel="All Teams"
+              />
             </div>
 
             {snapLoading ? (
@@ -405,7 +591,31 @@ export default function ReportsPage() {
         {/* ===== COMPARISONS ===== */}
         {activeTab === "comparisons" && (
           <div className="mt-6">
-            <p className="text-xs text-primary/40 mb-3">Q{currentFQ} FY{currentFY} — Click column headers to sort</p>
+            <div className="flex items-center gap-4">
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Fiscal Year</label>
+                <select value={compYear} onChange={(e) => setCompYear(Number(e.target.value))}
+                  className="mt-1 block rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm font-semibold text-primary outline-none focus:border-primary">
+                  {yearOptions.map((y) => <option key={y} value={y}>FY {y}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Quarter</label>
+                <select value={compQuarter} onChange={(e) => setCompQuarter(Number(e.target.value))}
+                  className="mt-1 block rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm font-semibold text-primary outline-none focus:border-primary">
+                  {[1, 2, 3, 4].map((q) => <option key={q} value={q}>Q{q}</option>)}
+                </select>
+              </div>
+              <MultiSelectDropdown
+                label="Teams"
+                options={teams.map((t) => ({ value: t.id, label: t.name }))}
+                selectedValues={compTeamFilter}
+                onChange={setCompTeamFilter}
+                allLabel="All Teams"
+              />
+            </div>
+
+            <p className="text-xs text-primary/40 mt-4 mb-3">Q{compQuarter} FY{compYear} — Click column headers to sort</p>
 
             {comparisonData.length > 0 ? (
               <>
@@ -459,73 +669,108 @@ export default function ReportsPage() {
                 </div>
               </>
             ) : (
-              <p className="text-sm text-primary/40">No team data for the current quarter.</p>
+              <p className="text-sm text-primary/40">No team data for Q{compQuarter} FY{compYear}.</p>
             )}
           </div>
         )}
 
         {/* ===== TDI GOALS ===== */}
-        {activeTab === "goals" && (
+        {activeTab === "goals" && (() => {
+          const companyHasActuals = quarterHasAssessments(goalsYear, goalsQuarter);
+          const companyActual = getTdiForQuarter(goalsYear, goalsQuarter);
+          const isFutureQuarter =
+            (goalsYear > currentFY) ||
+            (goalsYear === currentFY && goalsQuarter > currentFQ);
+          const colors = { green: "bg-green-500", yellow: "bg-yellow-400", red: "bg-red-500", none: "bg-brand-gray" };
+          return (
           <div className="mt-6 space-y-6">
+            {/* Quarter selector */}
+            <div className="rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
+              <label className="text-[10px] font-semibold uppercase tracking-wider text-primary/40">Quarter</label>
+              <select value={selectedKey}
+                onChange={(e) => { const [fy, fq] = e.target.value.split("-").map(Number); setGoalsYear(fy); setGoalsQuarter(fq); setBulkGoalStr(""); }}
+                className="mt-1 block rounded-[4px] border border-brand-gray bg-white px-3 py-2 text-sm font-semibold text-primary outline-none focus:border-primary">
+                {quarterEntries.map((q) => (
+                  <option key={q.key} value={q.key}>{quarterLabel(q.fy, q.fq)}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Company goal */}
             <div className="rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-primary/40">Company TDI Goal</h2>
               <div className="mt-3 flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-primary/50">Current:</span>
-                  <span className={`text-lg font-bold ${getCurrentTdi() > 0 ? "text-green-600" : getCurrentTdi() < 0 ? "text-red-500" : "text-yellow-500"}`}>
-                    {getCurrentTdi() > 0 ? "+" : ""}{getCurrentTdi()}%
-                  </span>
-                </div>
+                {companyHasActuals && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-primary/50">Actual:</span>
+                    <span className={`text-lg font-bold ${companyActual > 0 ? "text-green-600" : companyActual < 0 ? "text-red-500" : "text-yellow-500"}`}>
+                      {companyActual > 0 ? "+" : ""}{companyActual}%
+                    </span>
+                  </div>
+                )}
                 {isAdmin ? (
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-primary/50">Goal:</span>
-                    <input type="text" value={companyGoalStr}
-                      onChange={(e) => { setCompanyGoalStr(e.target.value); setTdiGoals({ ...tdiGoals, company: e.target.value ? parseInt(e.target.value) || 0 : undefined }); }}
+                    <input type="text" value={selectedCompanyGoal != null ? String(selectedCompanyGoal) : ""}
+                      onChange={(e) => updateCompanyGoal(e.target.value)}
                       placeholder="e.g., 50" className="w-20 rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-sm text-primary outline-none focus:border-primary" />
                     <span className="text-xs text-primary/30">%</span>
                   </div>
-                ) : tdiGoals.company != null ? (
+                ) : selectedCompanyGoal != null ? (
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-primary/50">Goal: {tdiGoals.company}%</span>
+                    <span className="text-xs text-primary/50">Goal: {selectedCompanyGoal}%</span>
                   </div>
                 ) : null}
-                {tdiGoals.company != null && (() => {
-                  const status = goalStatus(getCurrentTdi(), tdiGoals.company);
-                  const colors = { green: "bg-green-500", yellow: "bg-yellow-400", red: "bg-red-500", none: "bg-brand-gray" };
-                  return <span className={`h-3 w-3 rounded-full ${colors[status]}`} />;
-                })()}
+                {companyHasActuals && selectedCompanyGoal != null && (
+                  <span className={`h-3 w-3 rounded-full ${colors[goalStatus(companyActual, selectedCompanyGoal)]}`} />
+                )}
               </div>
             </div>
 
             {/* Team goals */}
             <div className="rounded-[4px] border border-brand-gray bg-white p-4 shadow-sm">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-primary/40">Team TDI Goals</h2>
+
+              {isAdmin && teams.length > 0 && (
+                <div className="mt-3 flex items-center gap-2 border-b border-brand-gray/50 pb-3">
+                  <span className="text-xs text-primary/50">Set goal for all teams:</span>
+                  <input type="text" value={bulkGoalStr}
+                    onChange={(e) => { const v = e.target.value; if (v !== "" && Number.isNaN(Number(v)) && v !== "-") return; setBulkGoalStr(v); }}
+                    placeholder="e.g., 30"
+                    className="w-20 rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-xs text-primary outline-none focus:border-primary" />
+                  <span className="text-xs text-primary/30">%</span>
+                  <button onClick={applyBulkGoal} disabled={bulkGoalStr === ""}
+                    className="rounded-[4px] border border-brand-gray bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-primary transition hover:border-primary disabled:opacity-50">
+                    Apply to all
+                  </button>
+                </div>
+              )}
+
               <div className="mt-3 space-y-2">
                 {teams.map((t) => {
-                  const current = getCurrentTdi(t.id);
-                  const goal = tdiGoals.teams?.[t.id];
-                  const status = goalStatus(current, goal);
-                  const colors = { green: "bg-green-500", yellow: "bg-yellow-400", red: "bg-red-500", none: "bg-brand-gray" };
+                  const teamHasActuals = quarterHasAssessments(goalsYear, goalsQuarter, t.id);
+                  const actual = getTdiForQuarter(goalsYear, goalsQuarter, t.id);
+                  const goal = selectedTeamGoals[t.id];
                   return (
                     <div key={t.id} className="flex items-center gap-4 py-1">
                       <span className="w-40 text-sm font-semibold text-primary truncate">{t.name}</span>
-                      <span className={`text-sm font-bold ${current > 0 ? "text-green-600" : current < 0 ? "text-red-500" : "text-yellow-500"}`}>
-                        {current > 0 ? "+" : ""}{current}%
-                      </span>
+                      {teamHasActuals ? (
+                        <span className={`text-sm font-bold ${actual > 0 ? "text-green-600" : actual < 0 ? "text-red-500" : "text-yellow-500"}`}>
+                          {actual > 0 ? "+" : ""}{actual}%
+                        </span>
+                      ) : (
+                        <span className="text-sm text-primary/30">—</span>
+                      )}
                       {isAdmin ? (
                         <input type="text" value={goal != null ? String(goal) : ""}
-                          onChange={(e) => {
-                            const val = e.target.value ? parseInt(e.target.value) || 0 : undefined;
-                            const newTeams = { ...(tdiGoals.teams ?? {}) };
-                            if (val != null) newTeams[t.id] = val; else delete newTeams[t.id];
-                            setTdiGoals({ ...tdiGoals, teams: newTeams });
-                          }}
+                          onChange={(e) => updateTeamGoal(t.id, e.target.value)}
                           placeholder="Goal" className="w-20 rounded-[4px] border border-brand-gray bg-white px-2 py-1 text-xs text-primary outline-none focus:border-primary" />
                       ) : goal != null ? (
                         <span className="text-xs text-primary/50">Goal: {goal}%</span>
                       ) : null}
-                      {goal != null && <span className={`h-3 w-3 rounded-full ${colors[status]}`} />}
+                      {teamHasActuals && goal != null && (
+                        <span className={`h-3 w-3 rounded-full ${colors[goalStatus(actual, goal)]}`} />
+                      )}
                     </div>
                   );
                 })}
@@ -535,6 +780,9 @@ export default function ReportsPage() {
                   className="mt-4 rounded-[4px] bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-white transition hover:opacity-90 disabled:opacity-50">
                   {goalSaving ? "Saving..." : "Save Goals"}
                 </button>
+              )}
+              {isFutureQuarter && (
+                <p className="mt-2 text-xs text-primary/40">No actuals yet for this quarter — set goals now and the dots will appear once assessments are entered.</p>
               )}
             </div>
 
@@ -566,7 +814,8 @@ export default function ReportsPage() {
               )}
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );

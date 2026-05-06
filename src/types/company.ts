@@ -42,7 +42,17 @@ export const DEFAULT_SCORING_PARAMETERS: ScoringParameters = {
   cultureFitCaps: { ...DEFAULT_CULTURE_FIT_CAPS },
 };
 
+export interface QuarterlyTdiGoal {
+  company?: number;
+  teams?: Record<string, number>;
+}
+
 export interface TdiGoals {
+  // Per-quarter goal map. Keys are "FY-FQ" e.g. "2026-2".
+  // Reads should check this first; writes always go here.
+  quarterly?: Record<string, QuarterlyTdiGoal>;
+  // Legacy flat fields. Kept as a fallback so existing data still
+  // reads correctly until it's overwritten with quarter-specific values.
   company?: number;                    // target TDI for the whole company (e.g., 50 = +50%)
   teams?: Record<string, number>;      // teamId → target TDI
 }

@@ -17,6 +17,7 @@ import type { TeamMember } from "@/types/team";
 import type { ProductivityTarget, TargetType, UnitType, Frequency, MonthlyValues } from "@/types/productivity";
 import { DEFAULT_MONTHLY } from "@/types/productivity";
 import NumericInput from "@/components/NumericInput";
+import TrashIcon from "@/components/TrashIcon";
 
 export default function ProductivityTargetsPage() {
   const { profile } = useAuth();
@@ -448,8 +449,9 @@ function TargetCard({
         <button onClick={onToggle} className="px-1 text-sm text-primary/50">
           {isExpanded ? "▲" : "▼"}
         </button>
-        <button onClick={onDelete} className="text-xs text-red-500 transition hover:text-red-700">
-          ✕
+        <button onClick={onDelete} className="text-red-500 transition hover:text-red-700"
+          title="Delete target" aria-label="Delete target">
+          <TrashIcon />
         </button>
       </div>
 

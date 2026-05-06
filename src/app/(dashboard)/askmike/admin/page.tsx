@@ -14,6 +14,7 @@ import {
 } from "@/lib/coach-service";
 import { uploadFile } from "@/lib/storage-service";
 import type { Coach, ReferenceDocument } from "@/types/coach";
+import TrashIcon from "@/components/TrashIcon";
 
 export default function AskMikeAdminPage() {
   const { profile } = useAuth();
@@ -279,9 +280,10 @@ export default function AskMikeAdminPage() {
                     )}
                     <button
                       onClick={() => handleDeleteRefDoc(rd.id)}
-                      className="text-xs text-red-500 transition hover:text-red-700"
+                      className="text-red-500 transition hover:text-red-700"
+                      title="Delete reference document" aria-label="Delete reference document"
                     >
-                      ✕
+                      <TrashIcon />
                     </button>
                   </div>
                 </div>
@@ -320,9 +322,10 @@ export default function AskMikeAdminPage() {
                     </button>
                     <button
                       onClick={() => handleDeleteCoach(coach.id)}
-                      className="text-xs text-red-500 transition hover:text-red-700"
+                      className="text-red-500 transition hover:text-red-700"
+                      title="Delete coach" aria-label="Delete coach"
                     >
-                      ✕
+                      <TrashIcon />
                     </button>
                   </div>
                 </div>

@@ -13,6 +13,7 @@ import {
 } from "@/lib/corevalue-service";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { CoreValue } from "@/types/corevalue";
+import TrashIcon from "@/components/TrashIcon";
 
 interface EditingState {
   name: string;
@@ -280,9 +281,10 @@ export default function CoreValuesPage() {
                               behaviors: editing.behaviors.filter((_, j) => j !== i),
                             });
                           }}
-                          className="text-xs text-red-500 transition hover:text-red-700"
+                          className="text-red-500 transition hover:text-red-700"
+                          title="Remove behavior" aria-label="Remove behavior"
                         >
-                          ✕
+                          <TrashIcon />
                         </button>
                       </div>
                     ))}
