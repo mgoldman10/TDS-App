@@ -51,8 +51,19 @@ export async function POST(request: NextRequest) {
       await adminAuth.updateUser(userId, { email: newEmail.trim() });
     }
 
-    // Notify the user at their new address
-    const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://talentdensity.app"}/login`;
+    // Notify the user at their new address. Derive the login URL from the
+    // request so dev / preview / prod all just work — falling back to env
+    // and finally the known prod hostname if neither is available.
+    const forwardedHost = request.headers.get("x-forwarded-host");
+    const forwardedProto = request.headers.get("x-forwarded-proto");
+    const origin = forwardedHost
+      ? `${forwardedProto ?? "https"}://${forwardedHost}`
+      : new URL(request.url).origin;
+    const baseUrl =
+      origin ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "https://talentdensity.netlify.app";
+    const loginUrl = `${baseUrl}/login`;
     await sendEmailChangedEmail(newEmail.trim(), displayName || "there", loginUrl);
 
     return NextResponse.json({ success: true });
