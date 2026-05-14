@@ -135,10 +135,15 @@ export default function TalentGrid({ assessments, scoringParams, privacyMode, on
     };
   }
 
-  // Group assessments by score for overlap detection
+  // Group assessments by plotted pixel for overlap detection. Using the
+  // literal score as the key misses collisions when the MP/HP/LP/LCF zone
+  // positioners clamp two different scores to the same (cx, cy) — e.g., two
+  // MP members whose CF both exceeds hpCF land at the same Y because the
+  // relCF formula clamps at 1.0. Grouping by rounded pixel catches those.
   const grouped: Record<string, Assessment[]> = {};
   for (const a of assessments) {
-    const key = `${a.productivityScore.toFixed(1)}-${a.cultureFitScore.toFixed(1)}`;
+    const { cx, cy } = positionDot(a);
+    const key = `${Math.round(cx)},${Math.round(cy)}`;
     if (!grouped[key]) grouped[key] = [];
     grouped[key].push(a);
   }
