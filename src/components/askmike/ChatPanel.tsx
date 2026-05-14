@@ -225,8 +225,11 @@ export default function ChatPanel({
           setHistory((prev) => [stub, ...prev]);
           generateTitleInBackground(id, withResponse);
         }
-      } catch {
-        // Non-critical
+      } catch (error) {
+        // Don't break the chat if persistence fails, but surface the error
+        // so rules drift / auth gaps don't go silently undiagnosed like the
+        // PERMISSION_DENIED bug discovered 2026-05-14.
+        console.error("Failed to save transcript:", error);
       }
     } catch {
       setMessages([
