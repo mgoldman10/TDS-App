@@ -5,6 +5,51 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### TDI goals scoped per-user, not per-company
+Discovered: 2026-05-14
+
+User feedback from Xime via Loom 2026-05-14. When the Super Admin sets TDI goals (company-level and team-level for Q2 across quarters), those goals do not appear to other users — specifically, the CEO (company_admin) signing in afterward sees an empty TDI goals page and has to re-enter the same goals as if from scratch.
+
+Likely root cause: goals are being persisted scoped to the saving user's UID rather than to the company. Each user gets their own private "goals" record. Multiple authors of the "same" goal create multiple parallel records, none of which are visible to other users.
+
+Intended model (confirmed with Mike 2026-05-14):
+- Two scopes of goals only: company-level and team-level. No personal goals.
+- Company goals are set by the company_admin. Visible to all users in their respective scopes.
+- Team goals: company_admin can set goals across all teams (oversight), and each team leader can also set/modify their own team's goals (autonomy). Both can edit; admin sees all, leader sees only their own team.
+- Senior_leader cross-team visibility: leaders can only see goals (and actuals) for teams they lead. No cross-team visibility for senior_leader role.
+- Goals at the company level are visible to all users (read-only for non-admins).
+
+Diagnostic angle when picking this up:
+- Trace the TDI goals save and load code path
+- Identify what scope/key the goals are saved under today (companyId only? userId + companyId? userId only?)
+- Check whether there are separate flows by role that write to different paths/collections
+- Review Firestore data: count how many goals records exist, what UIDs they're associated with, and confirm whether multiple authors of the "same" goal create multiple records
+
+Fix shape:
+- Goals should be saved at the company level for company goals (e.g., companies/{cid}/tdiGoals/company-{quarter} or similar)
+- Team goals should be saved scoped to the team (e.g., companies/{cid}/teams/{teamId}/tdiGoals/{quarter})
+- Write authorization: company_admin can write all; senior_leader can write only their team's goals
+- Read authorization: company_admin can read all; senior_leader can read company-level goals (read-only) + their own team's goals
+- If multiple users have already saved divergent goals on staging or production, decide on reconciliation (likely: take the most recent set as canonical, archive others; the data volume is small)
+
+Status: open, real data-modeling bug. Affects trust in the goals feature. High priority once picked up.
+
+### TDI goals not visible to senior_leader role
+Discovered: 2026-05-14
+
+User feedback from Xime via Loom 2026-05-14. After the CEO (company_admin) set TDI goals at company and team levels, a senior_leader under the CEO opened their own report view and the TDI goals page appears empty. They cannot see goals set by their admin, cannot switch quarters to view different goal sets.
+
+This is a downstream symptom of the per-user goals scoping issue (separate FOLLOWUPS entry "TDI goals scoped per-user, not per-company"). If goals are saved scoped to the saving user's UID, then a senior_leader viewing their own page sees nothing because the CEO's goals are scoped to the CEO's UID, not visible to the leader.
+
+Intended behavior (confirmed with Mike 2026-05-14):
+- Senior_leader sees company-level goals (read-only — set by company_admin)
+- Senior_leader sees and can edit their own team's goals (set initially by company_admin, modifiable by leader)
+- Senior_leader does NOT see goals for other teams they don't lead
+
+Fix lands together with the per-user-scoping fix in the related entry. The data model change (goals scoped per company / per team rather than per user) automatically resolves visibility — once goals are stored at company/team scope, the senior_leader's read query (filtered to their team) finds them naturally.
+
+Status: open, depends on the upstream goals-scoping fix. Both should be fixed in the same pass.
+
 ### TDS save-confirmation indicator on KPI target editing
 Discovered: 2026-05-14
 
