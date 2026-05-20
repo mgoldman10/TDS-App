@@ -20,11 +20,11 @@ Mitigations applied 2026-05-20:
 - Local captured plaintext files from the offending commands removed from disk (transcript still retains the values; out of our control).
 
 Rotations to complete:
-- [ ] TDS Firebase admin SA key `bb393c78…` on `tds-app-b8493`: generate new key, update `.env.local` and the three Netlify split-var env vars (`FIREBASE_ADMIN_PROJECT_ID`/`_CLIENT_EMAIL`/`_PRIVATE_KEY`), redeploy, verify, then disable/delete the exposed key.
-- [ ] TDS Anthropic API key `sk-ant-api03-ZmrjMD5…`: generate new production key in console.anthropic.com, update Netlify `ANTHROPIC_API_KEY`, redeploy, verify, delete the exposed key.
-- [ ] Investigate and revoke the orphan SA key `f2e777ca…` on `tds-app-b8493` (created 2026-03-28, not referenced in repo / secure-keys / Netlify env / audit logs — almost certainly an unused setup-time download). Disable-first observation window recommended; revoke if no errors surface.
+- [x] TDS Firebase admin SA key `bb393c78…` on `tds-app-b8493` — DONE 2026-05-20: rotated to `98722668…`; both `bb393c78…` and the interim partially-leaked `3b4ee474…` revoked; production runtime verified on the new key.
+- [x] TDS Anthropic API key `sk-ant-api03-ZmrjMD5…` — DONE 2026-05-20: rotated to TDS-prod-2026-05-20 key; old key revoked in Anthropic console; AskMike verified working in production.
+- [ ] Investigate and revoke the orphan SA key `f2e777ca…` on `tds-app-b8493` (created 2026-03-28, not referenced in repo / secure-keys / Netlify env / audit logs — almost certainly an unused setup-time download). Disable-first observation window recommended; revoke if no errors surface. **Pending next session.**
 
-Status: open, in-progress mitigation. Track completion via commits closing each checkbox.
+Status: two of three rotations complete. Orphan-key cleanup remains open.
 
 ### TDI goals scoped per-user, not per-company
 Discovered: 2026-05-14
