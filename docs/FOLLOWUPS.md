@@ -22,7 +22,7 @@ Mitigations applied 2026-05-20:
 Rotations to complete:
 - [x] TDS Firebase admin SA key `bb393c78…` on `tds-app-b8493` — DONE 2026-05-20: rotated to `98722668…`; both `bb393c78…` and the interim partially-leaked `3b4ee474…` revoked; production runtime verified on the new key.
 - [x] TDS Anthropic API key `sk-ant-api03-ZmrjMD5…` — DONE 2026-05-20: rotated to TDS-prod-2026-05-20 key; old key revoked in Anthropic console; AskMike verified working in production.
-- [ ] Investigate and revoke the orphan SA key `f2e777ca…` on `tds-app-b8493` (created 2026-03-28, not referenced in repo / secure-keys / Netlify env / audit logs — almost certainly an unused setup-time download). Disable-first observation window recommended; revoke if no errors surface. **Pending next session.**
+- [~] Orphan SA key `f2e777ca…` on `tds-app-b8493` — DISABLED 2026-05-20 (full id `f2e777ca13de354735b4ac13c73d8bdf05a6ae22`). Observation window through ~2026-05-22. Not referenced in repo / secure-keys / Netlify env / audit logs. **Delete after the window if no auth-failure errors surface.** Re-enable command on standby in case something does break: `gcloud iam service-accounts keys enable f2e777ca13de354735b4ac13c73d8bdf05a6ae22 --iam-account=firebase-adminsdk-fbsvc@tds-app-b8493.iam.gserviceaccount.com --project=tds-app-b8493`.
 
 Status: two of three rotations complete. Orphan-key cleanup remains open.
 
