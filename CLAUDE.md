@@ -51,18 +51,26 @@ Any operation that reads `.env.local`, any `.env*` file, files in `~/Documents/A
 - `gcloud iam service-accounts keys create` — the JSON downloads to stdout if you don't `--output-file`
 - `cat`, `head`, `tail`, or any printing of any service-account JSON file
 
+### Failure modes — exit codes only, never argv
+Two failure modes from the 2026-05-20 rotation session that the original rule didn't cover. Both produced real exposures.
+
+- **Error/stderr leakage from secret-handling commands.** Error and exception handlers must NOT print captured stdout or stderr from any command that involved a secret value. A failed `netlify env:set` whose argv contained a private key will echo that key back in its error message — and a naive `print(result.stderr[:200])` will land it in the transcript. If a credential-handling command fails, report ONLY the exit code and a generic message — never the captured output. *(Learned 2026-05-20: a Python error handler printed `stderr[:200]` which contained PEM-header bytes of a freshly-minted key.)*
+
+- **Argv leakage.** Never pass a secret value as a command-line argument. Argv is visible in process listings (`ps`), shell history, and in error messages that echo the failed command. For setting secret env vars (e.g. a private key with literal `\n`), use `netlify env:import` from a mode-600 temp dotenv file, OR pipe via stdin, OR use the API with the value in a JSON body read from a file. Delete the temp file in a `finally` block. *(Learned 2026-05-20: `netlify env:set` with a PEM key in argv both failed AND leaked, because the key's leading dashes collided with option parsing and the failure echoed the argv.)*
+
 ### Acceptable patterns
 - **Env var verification:** extract only the first ~10 chars of a string-valued secret, or print only the first 16 chars of its SHA-256.
 - **JSON secret files:** parse with Python or `jq`, extract only non-secret fields — `type`, `project_id`, `client_email`, first 8 chars of `private_key_id`. Never print `private_key`.
 - **Comparing two secret values:** compare SHA-256 hashes, not the values themselves. SHA-256 is one-way; the hash is safe to display.
 - **Netlify env inspection:** use the default `netlify env:list` (values are masked). For a specific value, `netlify env:get KEY | sha256sum` and report the hash.
+- **Writing secret env vars to Netlify:** write a mode-600 temp dotenv file, `netlify env:import` it, delete the temp file in `finally`. Verify with a SHA-256 read-back. Never argv.
 
 ### When in doubt
 Extract only what's needed. If you only need to verify that a value's prefix matches an expected pattern, show only the prefix. If a command accidentally dumps a secret, **flag it immediately in your response** so the user can rotate the credential before the transcript is logged elsewhere. Don't try to bury or undo it — surfacing is the recovery path.
 
 **This rule overrides convenience.** A multi-step masked verification is always preferable to a one-line unmasked grep. The few extra seconds are cheap; rotating a leaked production credential is not.
 
-Three production credentials were exposed via this pattern in the 48 hours preceding 2026-05-20 (TDS Firebase admin SA key, TDS Anthropic API key, BLT Planner Anthropic API key). This rule exists to prevent a fourth.
+**Four** production credentials have been exposed via these patterns: the BLT Planner Anthropic API key on 2026-05-08 (rotated same day), and three on 2026-05-20 during the TDS rotation session — the TDS Firebase admin SA key (via a `.env.local` grep), the TDS Anthropic API key (via `netlify env:list --plain`), and partial PEM-header bytes of a freshly-minted interim TDS Firebase SA key (via a Python error handler that echoed captured stderr). The two "Failure modes" rules above were added in direct response to the 2026-05-20 incidents. This section exists to prevent a fifth.
 
 ---
 
