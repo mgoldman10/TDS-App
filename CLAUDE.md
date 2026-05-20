@@ -40,6 +40,32 @@ The process rolls top-down through the organization. Each leader runs their own 
 
 ---
 
+## Credential Handling — NEVER LEAK SECRETS TO CHAT
+
+Any operation that reads `.env.local`, any `.env*` file, files in `~/Documents/AppDevelopment/secure/firebase-keys/`, Netlify env vars, GCP service account keys, or anything containing secret material **MUST mask output before it reaches stdout.** Never use commands that would dump full credentials, even briefly — terminal output goes into the conversation transcript and out of your control.
+
+### Forbidden without masking
+- `cat .env.local`, `grep` on `.env.local`, `head`/`tail` on `.env.local` (or any other env file)
+- `netlify env:list --plain` — **forbidden in all forms.** The `--plain` flag dumps values, not just names. Use the masked default `netlify env:list` instead.
+- `netlify env:get KEY` without piping the value into a masker
+- `gcloud iam service-accounts keys create` — the JSON downloads to stdout if you don't `--output-file`
+- `cat`, `head`, `tail`, or any printing of any service-account JSON file
+
+### Acceptable patterns
+- **Env var verification:** extract only the first ~10 chars of a string-valued secret, or print only the first 16 chars of its SHA-256.
+- **JSON secret files:** parse with Python or `jq`, extract only non-secret fields — `type`, `project_id`, `client_email`, first 8 chars of `private_key_id`. Never print `private_key`.
+- **Comparing two secret values:** compare SHA-256 hashes, not the values themselves. SHA-256 is one-way; the hash is safe to display.
+- **Netlify env inspection:** use the default `netlify env:list` (values are masked). For a specific value, `netlify env:get KEY | sha256sum` and report the hash.
+
+### When in doubt
+Extract only what's needed. If you only need to verify that a value's prefix matches an expected pattern, show only the prefix. If a command accidentally dumps a secret, **flag it immediately in your response** so the user can rotate the credential before the transcript is logged elsewhere. Don't try to bury or undo it — surfacing is the recovery path.
+
+**This rule overrides convenience.** A multi-step masked verification is always preferable to a one-line unmasked grep. The few extra seconds are cheap; rotating a leaked production credential is not.
+
+Three production credentials were exposed via this pattern in the 48 hours preceding 2026-05-20 (TDS Firebase admin SA key, TDS Anthropic API key, BLT Planner Anthropic API key). This rule exists to prevent a fourth.
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |

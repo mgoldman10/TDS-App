@@ -5,6 +5,27 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### 2026-05-20 credential exposure incident — TDS production secrets
+Discovered: 2026-05-20
+
+During the Phase 3.2 / Phase 4 setup work, two Claude Code commands dumped production credentials to terminal output (and therefore into this session's conversation transcript):
+
+1. **`grep -n FIREBASE_ADMIN_SERVICE_ACCOUNT .env.local`** — meant to locate a line for an env-file edit; instead printed the full `FIREBASE_ADMIN_SERVICE_ACCOUNT` JSON blob, including the private key (`private_key_id` prefix `bb393c78…`) for the production Firebase admin service account `firebase-adminsdk-fbsvc@tds-app-b8493.iam.gserviceaccount.com`.
+2. **`netlify env:list --plain`** — assumed `--plain` meant "names only" but it dumps values in env-file format. Exposed (a) the same Firebase SA private key (Netlify production was using the same key as local), (b) `FIREBASE_ADMIN_CLIENT_EMAIL`, and (c) the TDS production `ANTHROPIC_API_KEY` in full (prefix `sk-ant-api03-ZmrjMD5…`). This is the same TDS Anthropic key that was previously discussed on 2026-05-08 but never before fully dumped.
+
+Coincident with the 2026-05-08 BLT Anthropic key exposure (resolved via key rotation that day), this is the third production credential exposure in 48 hours.
+
+Mitigations applied 2026-05-20:
+- New CLAUDE.md section "Credential Handling — NEVER LEAK SECRETS TO CHAT" with forbidden/acceptable command patterns, intended to prevent the next occurrence.
+- Local captured plaintext files from the offending commands removed from disk (transcript still retains the values; out of our control).
+
+Rotations to complete:
+- [ ] TDS Firebase admin SA key `bb393c78…` on `tds-app-b8493`: generate new key, update `.env.local` and the three Netlify split-var env vars (`FIREBASE_ADMIN_PROJECT_ID`/`_CLIENT_EMAIL`/`_PRIVATE_KEY`), redeploy, verify, then disable/delete the exposed key.
+- [ ] TDS Anthropic API key `sk-ant-api03-ZmrjMD5…`: generate new production key in console.anthropic.com, update Netlify `ANTHROPIC_API_KEY`, redeploy, verify, delete the exposed key.
+- [ ] Investigate and revoke the orphan SA key `f2e777ca…` on `tds-app-b8493` (created 2026-03-28, not referenced in repo / secure-keys / Netlify env / audit logs — almost certainly an unused setup-time download). Disable-first observation window recommended; revoke if no errors surface.
+
+Status: open, in-progress mitigation. Track completion via commits closing each checkbox.
+
 ### TDI goals scoped per-user, not per-company
 Discovered: 2026-05-14
 
