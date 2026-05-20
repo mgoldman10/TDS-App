@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useCompany } from "@/contexts/CompanyContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { isAtLeast } from "@/types/auth";
+import StagingBadge from "@/components/StagingBadge";
 
 interface NavItem {
   label: string;
@@ -78,10 +79,11 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <aside className="flex h-screen w-56 flex-shrink-0 flex-col border-r border-brand-gray" style={{ backgroundColor: "#212121" }}>
       {/* Logo */}
-      <div className="px-6 py-4">
+      <div className="flex items-center gap-2 px-6 py-4">
         <Link href="/dashboard" className="text-lg font-extrabold tracking-tight text-white">
           Talent Density Systems
         </Link>
+        <StagingBadge />
       </div>
 
       {/* Active Company Indicator — superadmin (picks via /admin) */}

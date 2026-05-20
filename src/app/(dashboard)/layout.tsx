@@ -7,6 +7,7 @@ import LoadingScreen from "@/components/LoadingScreen";
 import Sidebar from "@/components/Sidebar";
 import InactivityWarningModal from "@/components/InactivityWarningModal";
 import CompanyPicker from "@/components/CompanyPicker";
+import StagingBadge from "@/components/StagingBadge";
 import { useInactivityLogout } from "@/lib/useInactivityLogout";
 import { CompanyProvider, useCompany } from "@/contexts/CompanyContext";
 
@@ -56,9 +57,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         >
           ☰
         </button>
-        <span className="text-sm font-extrabold tracking-tight text-white">
-          Talent Density Systems
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-extrabold tracking-tight text-white">
+            Talent Density Systems
+          </span>
+          <StagingBadge />
+        </div>
         <div className="w-8" />
       </div>
 
