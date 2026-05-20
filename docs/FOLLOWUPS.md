@@ -64,7 +64,9 @@ Fix shape: add a brief save state indicator (likely "Saving..." → "Saved" patt
 
 Status: open, low-priority Phase 2 polish — UX improvement, not a functional bug.
 
-### TDS Firestore rules not in source control
+## Done
+
+### ~~TDS Firestore rules not in source control~~
 Discovered: 2026-05-14
 
 During the chat history persistence diagnosis (2026-05-14), confirmed that TDS's Firestore rules are managed only in the Firebase console — no `firestore.rules` file exists in the repo. This creates several gaps:
@@ -79,8 +81,4 @@ Fix shape (when prioritized): extract current rules from Firebase console into `
 
 Pursue before TDS staging environment is set up so rules-management discipline is in place from the start. Estimated 1-2 hours.
 
-Status: open, technical debt.
-
-## Done
-
-(strike through items here as they're shipped)
+CLOSED 2026-05-19: firestore.rules extracted from production console via Firebase Rules REST API, committed to repo root. firestore.indexes.json corrected from 3 to 9 composite indexes to match deployed production state. firebase.json added at repo root enabling CLI deploy workflow. .firebaserc binds repo to tds-app-b8493 as default and production. Verified via two no-op deploys 2026-05-19 — both `firebase deploy --only firestore:rules` and `firebase deploy --only firestore:indexes` confirmed source canonically matches deployed.
