@@ -5,6 +5,32 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### AskMike name anonymization round-trip not re-hydrating
+Discovered: 2026-05-20
+
+INTENDED DESIGN (per Mike): AskMike is supposed to protect privacy via an anonymize-then-rehydrate round trip:
+- **OUTBOUND** (app → Anthropic): real person name and company name are replaced with anonymized tokens/placeholders before the prompt leaves our infrastructure, so Anthropic never receives or could retain the real names.
+- **INBOUND** (Anthropic response → AskMike → user): the app re-hydrates the tokens back into the real names before display, so the coach appears to know the real name even though Anthropic never did.
+
+OBSERVED (production, `talentdensity.netlify.app`, People Coach, member route `/members/Ek6h1PwmfBUUf60Af1B3`): asked "Do you know the name of my SVP people?", the coach replied it can see the role (SVP People) but does NOT have the person's actual name "in the information provided to me," and asked what to call them.
+
+This means the round trip is failing — the coach should have been able to use the real name after re-hydration, but it's behaving as if no name was ever provided. Likely failure modes to check:
+
+1. **Over-stripping outbound:** anonymization removes the name entirely instead of replacing it with a reversible token, so there's nothing to re-hydrate. (Model sees role only → correctly says "no name.")
+2. **Missing re-hydration inbound:** name IS tokenized outbound (e.g. `PERSON_1`) but the inbound mapping is empty/lost, so the token never gets swapped back. (Would more likely show the raw token, but the model may rationalize a meaningless token as "no name.")
+3. **Name never tokenized:** outbound step passes role but never includes a name token at all.
+
+The model's phrasing ("don't have their actual name in the information provided") points toward #1 or #3 — it received no name-token, only a role.
+
+Diagnostic angle when picked up:
+- Find the AskMike API route(s) and locate the outbound anonymization step. Confirm whether person/company names are (a) replaced with reversible tokens, (b) stripped entirely, or (c) never included.
+- Locate the inbound re-hydration step. Confirm a token→realname map is built outbound and applied to the response inbound.
+- Check whether the map is per-request (built fresh each call) and whether it's being lost between request and response (e.g. not persisted across the API round trip, scoping bug).
+- Test across all three coaches (KPI / People / Difficult Conversations) — the anonymization may live in shared code or be duplicated per coach with drift.
+- Verify the privacy guarantee still holds: whatever the fix, confirm real names do NOT reach Anthropic (the outbound tokenization must keep working even as inbound re-hydration is repaired).
+
+Status: open. Privacy mechanism partially working — names appear NOT to be reaching Anthropic (good), but re-hydration is not restoring them for the user (the bug). Medium-high priority: it degrades AskMike's usefulness (can't reference people by name) and indicates the privacy round-trip code has a gap worth understanding fully.
+
 ### 2026-05-20 credential exposure incident — TDS production secrets
 Discovered: 2026-05-20
 
