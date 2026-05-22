@@ -5,6 +5,33 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### Resend production API key rotation — BLOCKED on persistent 401
+Started 2026-05-21. The production Resend key was exposed in chat 2026-05-21 (exposure #5 — Netlify raw API returned the `dev`-context value unmasked; my safety check had only covered the `production` context). Rotation BLOCKED:
+
+- THREE auth tests failed 401: two different freshly-generated keys (`re_6aT…`, then `re_JGD…`), the second re-tested after completing Resend's creation flow ("Done"). All three keys were clean 36-byte `re_` format.
+- NOT a paste/format problem (two distinct clean keys both 401'd) and NOT an activation problem (re-test after finalize still 401'd).
+- Leading hypothesis: **Resend account/workspace mismatch** — the key's owning account differs from what the API auth realm expects. Or a key-state issue in Resend (revoked-on-create, scope restriction, etc.).
+
+Diagnostic plan for next session (do these BEFORE more rotation):
+
+1. In the Resend dashboard, confirm which ACCOUNT/WORKSPACE owns the originally-exposed (still-live) production key. Generate the new key in that SAME account.
+2. Test the new key using Resend's own docs / API-playground "Try it" panel (key stays in-browser, no curl/temp-file/leak risk). If it returns 200 there but 401 via our curl → our call path is wrong. If it 401s there too → the key isn't valid in that account.
+3. Only after a confirmed-working key: install on production Netlify `RESEND_API_KEY` (production context only, safe curl-config path with token + body both in mode-600 files), SHA-256 verify, redeploy, then REVOKE the old exposed key, verify revocation via the Resend dashboard.
+
+New key should have **Sending Access** (not Full Access), domain-scoped if Resend offers that option (least privilege).
+
+Status: **BLOCKED.** Old exposed key still LIVE (not revoked). Risk LOW — Resend keys only authorize email sending; they can't read account data or impersonate. Lowest-severity of the 5 exposures.
+
+### Staging email env vars — clean up after Resend rotation
+Discovered 2026-05-21. Phase 4 (staging deploy context configuration) left the staging email config in an ambiguous state:
+
+- `EMAIL_FROM` and `EMAIL_FROM_NAME` env:set commands on staging contexts were **silent CLI no-ops** — the API view still shows them as only "All"-scoped, so staging contexts inherit the production FROM values.
+- `RESEND_API_KEY` staging-context state is ambiguous — the API returned masked display for `branch-deploy` and `deploy-preview` after the env:set attempt; can't tell from the masked text whether the empty-string override took or the original production value remained.
+
+**HARMLESS in practice:** the email.ts code guard (committed `2d48d14` on 2026-05-21) early-returns and logs intended sends when `!isProduction()`, so staging will not email regardless of what the env vars hold. This is config-matches-intent cleanup, not a live risk.
+
+When picked up (alongside the Resend rotation): set empty-string `RESEND_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` on `deploy-preview` + `branch-deploy` via authoritative curl PATCH (CLI `env:set` silently no-ops for these; the PATCH endpoint we discovered in Phase 4 — `PATCH /accounts/{slug}/env/{key}?site_id=…` — works). Verify via raw API with ALL contexts' values suppressed in any diagnostic output (per the dev-context leak lesson). Recommend updating CLAUDE.md "Acceptable patterns" with: *when iterating env-var contexts via API for any secret-bearing var, suppress value display for ALL contexts — never assume any context is non-sensitive.*
+
 ### AskMike name anonymization round-trip not re-hydrating
 Discovered: 2026-05-20
 
