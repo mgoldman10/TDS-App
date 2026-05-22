@@ -1,4 +1,7 @@
 import { Resend } from "resend";
+import { isProduction } from "@/lib/env";
+
+type EmailType = "welcome" | "email-changed" | "password-reset";
 
 let cachedResend: Resend | null = null;
 
@@ -18,7 +21,17 @@ const FROM_NAME = process.env.EMAIL_FROM_NAME || "Talent Density Systems";
 const FROM_EMAIL = process.env.EMAIL_FROM || "onboarding@resend.dev";
 const FROM = `${FROM_NAME} <${FROM_EMAIL}>`;
 
-async function send(opts: { to: string; subject: string; html: string }) {
+async function send(opts: { type: EmailType; to: string; subject: string; html: string }) {
+  // In staging and dev, log the intended send and skip. Defense in depth:
+  // the staging Netlify context also sets RESEND_API_KEY="" as a backstop,
+  // but this code guard is the durable primary protection — drift in env
+  // config can't re-enable real email sending from non-production builds.
+  if (!isProduction()) {
+    console.log(
+      `[email skipped — non-production] type=${opts.type} to=${opts.to} subject="${opts.subject}"`
+    );
+    return null;
+  }
   const { data, error } = await getResend().emails.send({
     from: FROM,
     to: opts.to,
@@ -39,6 +52,7 @@ export async function sendWelcomeEmail(
   resetLink: string
 ) {
   await send({
+    type: "welcome",
     to: toEmail,
     subject: "Welcome to Talent Density Systems — Set Your Password",
     html: `
@@ -68,6 +82,7 @@ export async function sendEmailChangedEmail(
   loginUrl: string
 ) {
   await send({
+    type: "email-changed",
     to: newEmail,
     subject: "Your login email has been updated — Talent Density Systems",
     html: `
@@ -97,6 +112,7 @@ export async function sendPasswordResetEmail(
   resetLink: string
 ) {
   await send({
+    type: "password-reset",
     to: toEmail,
     subject: "Reset Your Password — Talent Density Systems",
     html: `
