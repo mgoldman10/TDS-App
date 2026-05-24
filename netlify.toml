@@ -1,0 +1,29 @@
+# Netlify build configuration for TDS.
+#
+# - This file controls how TDS builds on Netlify.
+# - Environment variables (Firebase keys, service account, etc.) are
+#   managed in the Netlify dashboard per context — NOT in this file.
+# - Changes to this file go through git history and review.
+
+[build]
+command = "npm run build"
+publish = ".next"
+
+[build.environment]
+NODE_VERSION = "22"
+NEXT_TELEMETRY_DISABLED = "1"
+
+[context.production]
+# Triggered by main branch pushes.
+# Uses production-context env vars from Netlify dashboard.
+# Deploys to talentdensity.netlify.app.
+
+[context.deploy-preview]
+# Triggered by pull requests.
+# Uses deploy-preview-context env vars (staging Firebase).
+# Each PR gets its own URL: deploy-preview-N--talentdensity.netlify.app.
+
+[context.branch-deploy]
+# Triggered by pushes to any non-main branch (including staging).
+# Uses branch-deploy-context env vars (staging Firebase).
+# URL pattern: <branch>--talentdensity.netlify.app.

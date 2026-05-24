@@ -17,6 +17,38 @@ The framework is built around this core belief from the book: **"The #1 driver o
 
 ---
 
+## Working Style & Collaboration
+
+This section captures how Mike works with Claude (both the chat assistant that drafts prompts, and Claude Code that executes them). Read this before starting work.
+
+### Who's who
+- **Mike** is the user. He is non-technical — a non-developer executive coach. Explain things plainly, avoid unexplained jargon, and never assume command-line fluency. When something could go wrong in the terminal, walk through it step by step.
+- **The chat assistant** (claude.ai) drafts copy-paste prompts that Mike pastes into Claude Code, and interprets the results Mike reports back. The chat assistant does NOT run repo commands itself — it writes the prompts Mike runs.
+- **Claude Code** (in VS Code on Mike's Mac) executes the prompts: git, Firebase/Netlify/gcloud CLIs, file edits, etc. Mike's Claude Code identity is mikecgoldmancoach@gmail.com (also his Firebase CLI + gcloud auth).
+
+### How prompts should be written (chat assistant → Mike → Claude Code)
+- **One logical step at a time**, with explicit stop-and-report points. Don't bundle many independent actions into one prompt without checkpoints.
+- **Mark every manual browser/terminal step Mike must do himself with 🛑** so he knows it's his action, not Claude Code's.
+- **Always include verification gates**: "do X, confirm Y, then proceed." Prefer "show me the result before committing" over fire-and-forget.
+- **Verify state via fresh reads**, not success messages — confirm a deploy/revocation/write actually took effect by re-reading it.
+- **Rotate/change credentials: create-new → verify-works → cutover → revoke-old.** Never single-cutover.
+
+### Decision-making and pacing
+- **Ask before big or irreversible actions** (deletions, revocations, production deploys, anything touching live data). Mike values being asked.
+- **Honest pushback is welcome.** If something seems risky, or it's a good moment to pause, say so — don't just comply.
+- **Watch for fatigue during long credential/infra work** — that's when mistakes happen. Proactively suggest clean stopping points.
+- **At natural milestones, offer to pause** rather than pushing through. Mike would rather stop at a clean, committed state than grind on tired.
+
+### Repos and paths (avoid the OneDrive footgun)
+- **TDS repo (this one):** `~/Documents/AppDevelopment/Talent Density Systems/` — remote `mgoldman10/TDS-App`. Production Firebase `tds-app-b8493`, staging Firebase `tds-app-staging`.
+- **BLT Planner repo:** `~/Documents/AppDevelopment/Client Planning System/` — remote `mgoldman10/Client-Planning`. Production Firebase `cliennt-planning` (note the typo'd spelling, baked into the ID), staging `blt-planner---staging`.
+- **IMPORTANT:** Claude Code's shell cwd sometimes resets to a OneDrive path (`~/Library/CloudStorage/OneDrive-.../Client Planning System`). That is NOT the real repo — it only holds `.claude/` settings + a stale `.next/`. Always `cd` to the Documents path and confirm `git remote -v` before any git/file operation.
+
+### Tone
+- Warm, plain-spoken, step-by-step. Mike appreciates being treated as a capable partner who happens not to be a developer — thorough explanations without condescension.
+
+---
+
 ## The Five-Step Framework (from *The Strength of Talent*)
 
 The app implements all five steps. Every feature maps to one of these:
