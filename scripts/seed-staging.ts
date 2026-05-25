@@ -1,10 +1,14 @@
 #!/usr/bin/env tsx
 /**
- * TDS Staging Seed Script — Phase 6b
+ * TDS Staging Seed Script — Phase 6c
  * =====================================================================
  *
- * Seeds ONE tenant ("Aurora Manufacturing") into the TDS staging Firebase
- * project. Idempotent: re-running with --apply produces no duplicates.
+ * Seeds THREE tenants into the TDS staging Firebase project:
+ *   • Aurora Manufacturing  (fiscal year starts January)
+ *   • Beacon Logistics      (fiscal year starts April)
+ *   • Crescent Consulting   (fiscal year starts October)
+ *
+ * Idempotent: re-running with --apply produces no duplicates.
  *
  * SAFETY
  * ------
@@ -22,7 +26,8 @@
  * -----
  *   npm run seed:staging          — dry run, no writes (default)
  *   npm run seed:staging:apply    — apply seed, idempotent
- *   npm run seed:staging:fresh    — wipe /companies/{cid} then re-seed
+ *   npm run seed:staging:fresh    — wipe each tenant's /companies/{cid}
+ *                                   then re-seed all three
  *
  * REQUIRED ENV (in .env.local)
  * ----------------------------
@@ -34,28 +39,32 @@
  *   from FIREBASE_ADMIN_SERVICE_ACCOUNT (production) to keep them physically
  *   distinct in the dotenv file.
  *
- * WHAT GETS SEEDED
- * ----------------
- *   • 1 company:      Aurora Manufacturing
- *   • 6 users:        CEO, CFO, COO, VP Sales, VP Ops, Analyst
- *   • 2 teams:        Senior Leadership Team + Operations Team
+ * WHAT GETS SEEDED (per tenant unless noted)
+ * ------------------------------------------
+ *   • 1 company:      Aurora / Beacon / Crescent (with correct fiscalYearStartMonth)
+ *   • 6 users:        CEO + 3 senior_leaders on SLT + 2 leaders on the functional team
+ *   • 2 teams:        Senior Leadership Team + a functional team (Operations / Fleet / Delivery)
  *   • 5 team members: everyone except the CEO (CEO assesses, isn't assessed)
- *   • 5 core values
+ *   • 5 core values:  tenant-specific
  *   • 15 productivity targets (3 per assessed member, weights sum to 100)
- *   • 11 assessments across FY2026 Q1/Q2/Q3:
- *       — 3 members with full 3-quarter history (UP, STABLE, DOWN trajectories)
- *       — 2 members with Q1 only (newer hires / partial history)
- *       Q1 snapshot still spans all 4 categories: 2× HP, 1× MP, 1× LP, 1× LCF
+ *   • ~11 assessments across FY2026 Q1/Q2/Q3 with a mix of trajectories
+ *     (UP / STABLE / DOWN / Q1-only) and a category mix that covers HP/MP/LP/LCF
+ *     somewhere within each tenant
  *   • 5 action plans (one per assessed member)
- *   • 2 AskMike coaches (global; matches ensureDefaultCoaches())
+ *   • 2 AskMike coaches (global; written once, matches ensureDefaultCoaches())
+ *
+ * EMAIL CONVENTION (applied to ALL tenants)
+ * -----------------------------------------
+ *   first.last@<tenant>-test.example.com
+ *   (e.g. sarah.chen@aurora-test.example.com, eli.tanaka@beacon-test.example.com)
  *
  * WIPE SCOPE
  * ----------
- *   --wipe-and-reseed recursively deletes /companies/{cid}. It does NOT
- *   touch Firebase Auth accounts or /userMappings docs. createUser() reuses
- *   existing Auth accounts via getUserByEmail() and idempotently updates
- *   userMappings, so leftover Auth/userMappings state from prior seeds is
- *   absorbed cleanly on re-seed.
+ *   --wipe-and-reseed recursively deletes /companies/{cid} for EACH tenant.
+ *   It does NOT touch Firebase Auth accounts or /userMappings docs.
+ *   createUser() reuses existing Auth accounts via getUserByEmail() and
+ *   idempotently updates userMappings, so leftover Auth/userMappings state
+ *   from prior seeds is absorbed cleanly on re-seed.
  *
  * =====================================================================
  */
@@ -90,18 +99,8 @@ if (WIPE && !APPLY) {
 const MODE = APPLY ? (WIPE ? "APPLY + WIPE" : "APPLY") : "DRY RUN";
 
 // ────────────────────────────────────────────────────────────────────────────
-// TENANT DATA (the one tenant Phase 6b seeds)
+// TYPES
 // ────────────────────────────────────────────────────────────────────────────
-
-const COMPANY_ID = "seed-aurora-manufacturing";
-const COMPANY_NAME = "Aurora Manufacturing";
-
-const SLT_TEAM_ID = "seed-team-slt";
-const OPS_TEAM_ID = "seed-team-operations";
-
-const FISCAL_YEAR = 2026;
-// Per-assessment quarters are stored on each SeedAssessment entry below —
-// different members get different numbers of historical quarters.
 
 type AppRole = "superadmin" | "company_admin" | "senior_leader" | "leader";
 
@@ -111,78 +110,11 @@ interface SeedUser {
   email: string;
   role: Exclude<AppRole, "superadmin">; // no superadmin in this seed
   title: string;          // job title (also used as TeamMember.role)
-  teamSlugs: string[];    // teams this user belongs to
+  teamSlugs: ("slt" | "functional")[];   // teams this user belongs to
   isAssessed: boolean;    // create a teamMember doc + assessment for this user?
-  assessedInTeam?: "slt" | "ops"; // which team's member roll they appear on
+  assessedInTeam?: "slt" | "functional"; // which team's member roll they appear on
   reportsToSlug?: string; // slug of the user they report to (for teamMember.reportsToUserId)
 }
-
-const USERS: SeedUser[] = [
-  {
-    slug: "ceo",
-    displayName: "Sarah Chen",
-    email: "sarah.chen@aurora-staging.test",
-    role: "company_admin",
-    title: "CEO",
-    teamSlugs: ["slt"],
-    isAssessed: false, // CEO isn't assessed in the group QTAM per the book
-  },
-  {
-    slug: "cfo",
-    displayName: "Marcus Webb",
-    email: "marcus.webb@aurora-staging.test",
-    role: "senior_leader",
-    title: "CFO",
-    teamSlugs: ["slt"],
-    isAssessed: true,
-    assessedInTeam: "slt",
-    reportsToSlug: "ceo",
-  },
-  {
-    slug: "coo",
-    displayName: "Priya Patel",
-    email: "priya.patel@aurora-staging.test",
-    role: "senior_leader",
-    title: "COO",
-    teamSlugs: ["slt", "ops"], // senior leader is on SLT + own functional team
-    isAssessed: true,
-    assessedInTeam: "slt",
-    reportsToSlug: "ceo",
-  },
-  {
-    slug: "vp-sales",
-    displayName: "David Rodriguez",
-    email: "david.rodriguez@aurora-staging.test",
-    role: "senior_leader",
-    title: "VP Sales",
-    teamSlugs: ["slt"],
-    isAssessed: true,
-    assessedInTeam: "slt",
-    reportsToSlug: "ceo",
-  },
-  {
-    slug: "vp-ops",
-    displayName: "Hannah Kim",
-    email: "hannah.kim@aurora-staging.test",
-    role: "leader",
-    title: "VP Operations",
-    teamSlugs: ["ops"],
-    isAssessed: true,
-    assessedInTeam: "ops",
-    reportsToSlug: "coo",
-  },
-  {
-    slug: "analyst",
-    displayName: "Alex Morgan",
-    email: "alex.morgan@aurora-staging.test",
-    role: "leader",
-    title: "Operations Analyst",
-    teamSlugs: ["ops"],
-    isAssessed: true,
-    assessedInTeam: "ops",
-    reportsToSlug: "coo",
-  },
-];
 
 interface SeedCoreValue {
   slug: string;
@@ -192,45 +124,6 @@ interface SeedCoreValue {
   order: number;
 }
 
-const CORE_VALUES: SeedCoreValue[] = [
-  {
-    slug: "customer-obsession",
-    name: "Customer Obsession",
-    description: "Start with the customer and work backwards.",
-    behaviors: ["Talks to customers weekly", "Cites customer impact in decisions"],
-    order: 1,
-  },
-  {
-    slug: "take-ownership",
-    name: "Take Ownership",
-    description: "Own outcomes, not tasks.",
-    behaviors: ["Says 'I' before 'we'", "Closes the loop without prompting"],
-    order: 2,
-  },
-  {
-    slug: "move-with-urgency",
-    name: "Move with Urgency",
-    description: "Bias to action; speed matters.",
-    behaviors: ["Ships in days, not weeks", "Decides with imperfect information"],
-    order: 3,
-  },
-  {
-    slug: "build-together",
-    name: "Build Together",
-    description: "We win as a team; ego at the door.",
-    behaviors: ["Shares credit", "Asks for and acts on feedback"],
-    order: 4,
-  },
-  {
-    slug: "question-everything",
-    name: "Question Everything",
-    description: "Politely challenge assumptions, including your own.",
-    behaviors: ["Asks 'why' before agreeing", "Welcomes being proven wrong"],
-    order: 5,
-  },
-];
-
-// Per-member productivity targets. Weights MUST sum to 100 per member.
 type TargetType = "bigger" | "smaller";
 type UnitType = "units" | "dollars" | "percentage";
 
@@ -245,37 +138,6 @@ interface SeedTarget {
   max: number;
 }
 
-const TARGETS_BY_USER: Record<string, SeedTarget[]> = {
-  cfo: [
-    { slug: "ebitda",         name: "EBITDA",                  type: "bigger",  unit: "dollars",    weight: 40, target: 8000000, min: 6000000, max: 8000000 },
-    { slug: "forecast-acc",   name: "Forecast Accuracy",       type: "bigger",  unit: "percentage", weight: 35, target: 95,      min: 85,      max: 95 },
-    { slug: "close-cycle",    name: "Monthly Close Cycle Days", type: "smaller", unit: "units",      weight: 25, target: 5,       min: 5,       max: 10 },
-  ],
-  coo: [
-    { slug: "otd",            name: "On-Time Delivery",        type: "bigger",  unit: "percentage", weight: 40, target: 98,      min: 90,      max: 98 },
-    { slug: "defect-rate",    name: "Defect Rate (ppm)",        type: "smaller", unit: "units",      weight: 35, target: 500,     min: 500,     max: 2000 },
-    { slug: "throughput",     name: "Units per Day",           type: "bigger",  unit: "units",      weight: 25, target: 1200,    min: 900,     max: 1200 },
-  ],
-  "vp-sales": [
-    { slug: "bookings",       name: "Quarterly Bookings",      type: "bigger",  unit: "dollars",    weight: 50, target: 3000000, min: 2000000, max: 3000000 },
-    { slug: "win-rate",       name: "Win Rate",                type: "bigger",  unit: "percentage", weight: 30, target: 35,      min: 20,      max: 35 },
-    { slug: "sales-cycle",    name: "Avg Sales Cycle Days",    type: "smaller", unit: "units",      weight: 20, target: 45,      min: 45,      max: 90 },
-  ],
-  "vp-ops": [
-    { slug: "shift-output",   name: "Shift Output Units",      type: "bigger",  unit: "units",      weight: 40, target: 400,     min: 300,     max: 400 },
-    { slug: "scrap",          name: "Scrap %",                 type: "smaller", unit: "percentage", weight: 30, target: 2,       min: 2,       max: 6 },
-    { slug: "safety",         name: "Recordable Incidents",    type: "smaller", unit: "units",      weight: 30, target: 0,       min: 0,       max: 3 },
-  ],
-  analyst: [
-    { slug: "report-on-time", name: "Reports Delivered On Time", type: "bigger",  unit: "percentage", weight: 50, target: 100,     min: 90,      max: 100 },
-    { slug: "rework",         name: "Reports Requiring Rework",  type: "smaller", unit: "units",      weight: 30, target: 0,       min: 0,       max: 5 },
-    { slug: "throughput",     name: "Reports per Quarter",       type: "bigger",  unit: "units",      weight: 20, target: 24,      min: 16,      max: 24 },
-  ],
-};
-
-// Assessment shape per assessed user. Hand-picked so the talent model renders
-// a mix of categories (2× HP, 1× MP, 1× LP, 1× LCF) under the default scoring
-// parameters.
 type CFRating = "models" | "lives" | "occasional" | "frequent";
 type Category = "HP" | "MP" | "LP" | "LCF";
 
@@ -289,205 +151,1008 @@ interface SeedAssessment {
   performanceCategory: Category;
 }
 
-// Per-user assessment history, in chronological order (earliest quarter first).
-// Three members get a full 3-quarter trajectory; two stay Q1-only to represent
-// newer hires / partial history. Each entry's fiscalYear+fiscalQuarter is also
-// included in its deterministic doc ID, so quarters are distinct docs and the
-// check-before-write stays idempotent across re-runs.
-//
+interface TenantSeed {
+  companyId: string;
+  companyName: string;
+  fiscalYearStartMonth: number;      // 1=Jan, 4=Apr, 10=Oct
+  sltTeamId: string;
+  functionalTeamId: string;
+  functionalTeamName: string;
+  users: SeedUser[];
+  coreValues: SeedCoreValue[];
+  targetsByUser: Record<string, SeedTarget[]>;
+  assessmentsByUser: Record<string, SeedAssessment[]>;
+}
+
+// Superadmin is intentionally kept separate from SeedUser: a superadmin
+// is not tied to any tenant (no companyId, no team membership, no per-
+// company users doc). SeedUser's role type still excludes "superadmin"
+// so a tenant entry can never accidentally promote someone to global.
+interface SeedSuperadmin {
+  displayName: string;
+  email: string;
+}
+
+const FISCAL_YEAR = 2026;
+// Per-assessment quarters are stored on each SeedAssessment entry below —
+// different members get different numbers of historical quarters. The
+// per-tenant fiscalYearStartMonth tells the app how to map quarters to
+// calendar months, so the same fiscalYear+quarter numbers are valid across
+// tenants with different fiscal calendars.
+
+// ────────────────────────────────────────────────────────────────────────────
+// TENANT 1 — AURORA MANUFACTURING (fiscal year starts January)
+// ────────────────────────────────────────────────────────────────────────────
+// Trajectories:
 //   cfo      — Marcus Webb       — DOWN: HP → MP → LP   (numbers slip, then crash)
 //   coo      — Priya Patel       — STABLE: HP → HP → HP (consistent star)
 //   vp-sales — David Rodriguez   — Q1 only, MP          (partial history)
 //   vp-ops   — Hannah Kim        — UP:   LP → MP → HP   (coaching worked)
 //   analyst  — Alex Morgan       — Q1 only, LCF         (newer hire)
-const ASSESSMENTS_BY_USER: Record<string, SeedAssessment[]> = {
-  // ─── Marcus (CFO) — DOWN ────────────────────────────────────────────
-  cfo: [
-    // Q1: HP — original strong baseline
+
+const AURORA: TenantSeed = {
+  companyId: "seed-aurora-manufacturing",
+  companyName: "Aurora Manufacturing",
+  fiscalYearStartMonth: 1,
+  sltTeamId: "seed-aurora-team-slt",
+  functionalTeamId: "seed-aurora-team-operations",
+  functionalTeamName: "Operations Team",
+
+  users: [
     {
-      fiscalYear: 2026, fiscalQuarter: 1,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "models",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { ebitda: 8100000, "forecast-acc": 96, "close-cycle": 4 },
-      cultureFitScore: 9.2,
-      productivityScore: 10,
-      performanceCategory: "HP",
+      slug: "ceo",
+      displayName: "Sarah Chen",
+      email: "sarah.chen@aurora-test.example.com",
+      role: "company_admin",
+      title: "CEO",
+      teamSlugs: ["slt"],
+      isAssessed: false, // CEO isn't assessed in the group QTAM per the book
     },
-    // Q2: MP — numbers slip, culture still solid
     {
-      fiscalYear: 2026, fiscalQuarter: 2,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "lives",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { ebitda: 7500000, "forecast-acc": 92, "close-cycle": 6 },
-      cultureFitScore: 9.0,
-      productivityScore: 7.5,
-      performanceCategory: "MP",
+      slug: "cfo",
+      displayName: "Marcus Webb",
+      email: "marcus.webb@aurora-test.example.com",
+      role: "senior_leader",
+      title: "CFO",
+      teamSlugs: ["slt"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
     },
-    // Q3: LP — numbers crash, first culture wobble (occasional cap kicks in)
     {
-      fiscalYear: 2026, fiscalQuarter: 3,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "lives",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "occasional",
-      },
-      productivityActuals: { ebitda: 6500000, "forecast-acc": 86, "close-cycle": 9 },
-      cultureFitScore: 8.4, // occasional cap
-      productivityScore: 5.0,
-      performanceCategory: "LP",
+      slug: "coo",
+      displayName: "Priya Patel",
+      email: "priya.patel@aurora-test.example.com",
+      role: "senior_leader",
+      title: "COO",
+      teamSlugs: ["slt", "functional"], // senior leader is on SLT + own functional team
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "vp-sales",
+      displayName: "David Rodriguez",
+      email: "david.rodriguez@aurora-test.example.com",
+      role: "senior_leader",
+      title: "VP Sales",
+      teamSlugs: ["slt"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "vp-ops",
+      displayName: "Hannah Kim",
+      email: "hannah.kim@aurora-test.example.com",
+      role: "leader",
+      title: "VP Operations",
+      teamSlugs: ["functional"],
+      isAssessed: true,
+      assessedInTeam: "functional",
+      reportsToSlug: "coo",
+    },
+    {
+      slug: "analyst",
+      displayName: "Alex Morgan",
+      email: "alex.morgan@aurora-test.example.com",
+      role: "leader",
+      title: "Operations Analyst",
+      teamSlugs: ["functional"],
+      isAssessed: true,
+      assessedInTeam: "functional",
+      reportsToSlug: "coo",
     },
   ],
 
-  // ─── Priya (COO) — STABLE ───────────────────────────────────────────
-  coo: [
-    // Q1: HP
+  coreValues: [
     {
-      fiscalYear: 2026, fiscalQuarter: 1,
-      cultureFitRatings: {
-        "customer-obsession": "models",
-        "take-ownership":     "models",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { otd: 98, "defect-rate": 480, throughput: 1210 },
-      cultureFitScore: 9.4,
-      productivityScore: 10,
-      performanceCategory: "HP",
+      slug: "customer-obsession",
+      name: "Customer Obsession",
+      description: "Start with the customer and work backwards.",
+      behaviors: ["Talks to customers weekly", "Cites customer impact in decisions"],
+      order: 1,
     },
-    // Q2: HP — small operational variance, still elite
     {
-      fiscalYear: 2026, fiscalQuarter: 2,
-      cultureFitRatings: {
-        "customer-obsession": "models",
-        "take-ownership":     "models",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { otd: 97, "defect-rate": 510, throughput: 1190 },
-      cultureFitScore: 9.4,
-      productivityScore: 9.5,
-      performanceCategory: "HP",
+      slug: "take-ownership",
+      name: "Take Ownership",
+      description: "Own outcomes, not tasks.",
+      behaviors: ["Says 'I' before 'we'", "Closes the loop without prompting"],
+      order: 2,
     },
-    // Q3: HP — slight uptick on both dimensions
     {
-      fiscalYear: 2026, fiscalQuarter: 3,
-      cultureFitRatings: {
-        "customer-obsession": "models",
-        "take-ownership":     "models",
-        "move-with-urgency":  "models",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { otd: 99, "defect-rate": 470, throughput: 1220 },
-      cultureFitScore: 9.6,
-      productivityScore: 10,
-      performanceCategory: "HP",
+      slug: "move-with-urgency",
+      name: "Move with Urgency",
+      description: "Bias to action; speed matters.",
+      behaviors: ["Ships in days, not weeks", "Decides with imperfect information"],
+      order: 3,
+    },
+    {
+      slug: "build-together",
+      name: "Build Together",
+      description: "We win as a team; ego at the door.",
+      behaviors: ["Shares credit", "Asks for and acts on feedback"],
+      order: 4,
+    },
+    {
+      slug: "question-everything",
+      name: "Question Everything",
+      description: "Politely challenge assumptions, including your own.",
+      behaviors: ["Asks 'why' before agreeing", "Welcomes being proven wrong"],
+      order: 5,
     },
   ],
 
-  // ─── David (VP Sales) — Q1 only ─────────────────────────────────────
-  "vp-sales": [
-    {
-      fiscalYear: 2026, fiscalQuarter: 1,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "lives",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "occasional",
+  targetsByUser: {
+    cfo: [
+      { slug: "ebitda",         name: "EBITDA",                  type: "bigger",  unit: "dollars",    weight: 40, target: 8000000, min: 6000000, max: 8000000 },
+      { slug: "forecast-acc",   name: "Forecast Accuracy",       type: "bigger",  unit: "percentage", weight: 35, target: 95,      min: 85,      max: 95 },
+      { slug: "close-cycle",    name: "Monthly Close Cycle Days", type: "smaller", unit: "units",      weight: 25, target: 5,       min: 5,       max: 10 },
+    ],
+    coo: [
+      { slug: "otd",            name: "On-Time Delivery",        type: "bigger",  unit: "percentage", weight: 40, target: 98,      min: 90,      max: 98 },
+      { slug: "defect-rate",    name: "Defect Rate (ppm)",        type: "smaller", unit: "units",      weight: 35, target: 500,     min: 500,     max: 2000 },
+      { slug: "throughput",     name: "Units per Day",           type: "bigger",  unit: "units",      weight: 25, target: 1200,    min: 900,     max: 1200 },
+    ],
+    "vp-sales": [
+      { slug: "bookings",       name: "Quarterly Bookings",      type: "bigger",  unit: "dollars",    weight: 50, target: 3000000, min: 2000000, max: 3000000 },
+      { slug: "win-rate",       name: "Win Rate",                type: "bigger",  unit: "percentage", weight: 30, target: 35,      min: 20,      max: 35 },
+      { slug: "sales-cycle",    name: "Avg Sales Cycle Days",    type: "smaller", unit: "units",      weight: 20, target: 45,      min: 45,      max: 90 },
+    ],
+    "vp-ops": [
+      { slug: "shift-output",   name: "Shift Output Units",      type: "bigger",  unit: "units",      weight: 40, target: 400,     min: 300,     max: 400 },
+      { slug: "scrap",          name: "Scrap %",                 type: "smaller", unit: "percentage", weight: 30, target: 2,       min: 2,       max: 6 },
+      { slug: "safety",         name: "Recordable Incidents",    type: "smaller", unit: "units",      weight: 30, target: 0,       min: 0,       max: 3 },
+    ],
+    analyst: [
+      { slug: "report-on-time", name: "Reports Delivered On Time", type: "bigger",  unit: "percentage", weight: 50, target: 100,     min: 90,      max: 100 },
+      { slug: "rework",         name: "Reports Requiring Rework",  type: "smaller", unit: "units",      weight: 30, target: 0,       min: 0,       max: 5 },
+      { slug: "throughput",     name: "Reports per Quarter",       type: "bigger",  unit: "units",      weight: 20, target: 24,      min: 16,      max: 24 },
+    ],
+  },
+
+  assessmentsByUser: {
+    // ─── Marcus (CFO) — DOWN ────────────────────────────────────────────
+    cfo: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "models",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { ebitda: 8100000, "forecast-acc": 96, "close-cycle": 4 },
+        cultureFitScore: 9.2,
+        productivityScore: 10,
+        performanceCategory: "HP",
       },
-      productivityActuals: { bookings: 2500000, "win-rate": 28, "sales-cycle": 60 },
-      cultureFitScore: 8.4, // occasional cap
-      productivityScore: 7.4,
-      performanceCategory: "MP",
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "lives",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { ebitda: 7500000, "forecast-acc": 92, "close-cycle": 6 },
+        cultureFitScore: 9.0,
+        productivityScore: 7.5,
+        performanceCategory: "MP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "lives",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "occasional",
+        },
+        productivityActuals: { ebitda: 6500000, "forecast-acc": 86, "close-cycle": 9 },
+        cultureFitScore: 8.4, // occasional cap
+        productivityScore: 5.0,
+        performanceCategory: "LP",
+      },
+    ],
+
+    // ─── Priya (COO) — STABLE ───────────────────────────────────────────
+    coo: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "customer-obsession": "models",
+          "take-ownership":     "models",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { otd: 98, "defect-rate": 480, throughput: 1210 },
+        cultureFitScore: 9.4,
+        productivityScore: 10,
+        performanceCategory: "HP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "customer-obsession": "models",
+          "take-ownership":     "models",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { otd: 97, "defect-rate": 510, throughput: 1190 },
+        cultureFitScore: 9.4,
+        productivityScore: 9.5,
+        performanceCategory: "HP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "customer-obsession": "models",
+          "take-ownership":     "models",
+          "move-with-urgency":  "models",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { otd: 99, "defect-rate": 470, throughput: 1220 },
+        cultureFitScore: 9.6,
+        productivityScore: 10,
+        performanceCategory: "HP",
+      },
+    ],
+
+    // ─── David (VP Sales) — Q1 only ─────────────────────────────────────
+    "vp-sales": [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "lives",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "occasional",
+        },
+        productivityActuals: { bookings: 2500000, "win-rate": 28, "sales-cycle": 60 },
+        cultureFitScore: 8.4, // occasional cap
+        productivityScore: 7.4,
+        performanceCategory: "MP",
+      },
+    ],
+
+    // ─── Hannah (VP Ops) — UP ───────────────────────────────────────────
+    "vp-ops": [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "lives",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { "shift-output": 310, scrap: 5, safety: 2 },
+        cultureFitScore: 9,
+        productivityScore: 5.0,
+        performanceCategory: "LP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "lives",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { "shift-output": 360, scrap: 3.5, safety: 1 },
+        cultureFitScore: 9,
+        productivityScore: 7.5,
+        performanceCategory: "MP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "models",
+          "move-with-urgency":  "lives",
+          "build-together":     "lives",
+          "question-everything": "lives",
+        },
+        productivityActuals: { "shift-output": 405, scrap: 2, safety: 0 },
+        cultureFitScore: 9.2,
+        productivityScore: 9.8,
+        performanceCategory: "HP",
+      },
+    ],
+
+    // ─── Alex (Analyst) — Q1 only ───────────────────────────────────────
+    analyst: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "customer-obsession": "lives",
+          "take-ownership":     "occasional",
+          "move-with-urgency":  "occasional",
+          "build-together":     "frequent",
+          "question-everything": "frequent",
+        },
+        productivityActuals: { "report-on-time": 95, rework: 1, throughput: 22 },
+        cultureFitScore: 5.4, // raw avg below frequent cap of 7.4, so cap is moot
+        productivityScore: 8.8,
+        performanceCategory: "LCF",
+      },
+    ],
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// TENANT 2 — BEACON LOGISTICS (fiscal year starts April)
+// ────────────────────────────────────────────────────────────────────────────
+// Trajectories:
+//   cfo      — Eli Tanaka       — UP:     MP → MP → HP   (steady climber)
+//   coo      — Maya Lindstrom   — DOWN:   HP → MP → LP   (network strain)
+//   vp-cs    — Andre Okafor     — Q1 only, MP            (newer hire)
+//   vp-fleet — Sofia Reyes      — Q1 only, LCF           (culture concerns)
+//   analyst  — Naomi Park       — Q1 only, HP            (strong newcomer)
+
+const BEACON: TenantSeed = {
+  companyId: "seed-beacon-logistics",
+  companyName: "Beacon Logistics",
+  fiscalYearStartMonth: 4,
+  sltTeamId: "seed-beacon-team-slt",
+  functionalTeamId: "seed-beacon-team-fleet-ops",
+  functionalTeamName: "Fleet Operations Team",
+
+  users: [
+    {
+      slug: "ceo",
+      displayName: "Jordan Bennett",
+      email: "jordan.bennett@beacon-test.example.com",
+      role: "company_admin",
+      title: "CEO",
+      teamSlugs: ["slt"],
+      isAssessed: false,
+    },
+    {
+      slug: "cfo",
+      displayName: "Eli Tanaka",
+      email: "eli.tanaka@beacon-test.example.com",
+      role: "senior_leader",
+      title: "CFO",
+      teamSlugs: ["slt"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "coo",
+      displayName: "Maya Lindstrom",
+      email: "maya.lindstrom@beacon-test.example.com",
+      role: "senior_leader",
+      title: "COO",
+      teamSlugs: ["slt", "functional"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "vp-cs",
+      displayName: "Andre Okafor",
+      email: "andre.okafor@beacon-test.example.com",
+      role: "senior_leader",
+      title: "VP Customer Success",
+      teamSlugs: ["slt"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "vp-fleet",
+      displayName: "Sofia Reyes",
+      email: "sofia.reyes@beacon-test.example.com",
+      role: "leader",
+      title: "VP Fleet Operations",
+      teamSlugs: ["functional"],
+      isAssessed: true,
+      assessedInTeam: "functional",
+      reportsToSlug: "coo",
+    },
+    {
+      slug: "analyst",
+      displayName: "Naomi Park",
+      email: "naomi.park@beacon-test.example.com",
+      role: "leader",
+      title: "Logistics Analyst",
+      teamSlugs: ["functional"],
+      isAssessed: true,
+      assessedInTeam: "functional",
+      reportsToSlug: "coo",
     },
   ],
 
-  // ─── Hannah (VP Ops) — UP ───────────────────────────────────────────
-  "vp-ops": [
-    // Q1: LP — output low, scrap and safety problems
+  coreValues: [
     {
-      fiscalYear: 2026, fiscalQuarter: 1,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "lives",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { "shift-output": 310, scrap: 5, safety: 2 },
-      cultureFitScore: 9,
-      productivityScore: 5.0,
-      performanceCategory: "LP",
+      slug: "deliver-on-promise",
+      name: "Deliver on Promise",
+      description: "On-time, every time — what we commit to is what we ship.",
+      behaviors: ["Confirms ETAs before committing", "Flags slips before they hit the customer"],
+      order: 1,
     },
-    // Q2: MP — visible recovery on all three KPIs
     {
-      fiscalYear: 2026, fiscalQuarter: 2,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "lives",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { "shift-output": 360, scrap: 3.5, safety: 1 },
-      cultureFitScore: 9,
-      productivityScore: 7.5,
-      performanceCategory: "MP",
+      slug: "earn-trust-daily",
+      name: "Earn Trust Daily",
+      description: "Reliability builds long relationships.",
+      behaviors: ["Follows up without prompting", "Says 'I missed it' before someone else does"],
+      order: 2,
     },
-    // Q3: HP — hits targets, ownership behavior shows up too
     {
-      fiscalYear: 2026, fiscalQuarter: 3,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "models",
-        "move-with-urgency":  "lives",
-        "build-together":     "lives",
-        "question-everything": "lives",
-      },
-      productivityActuals: { "shift-output": 405, scrap: 2, safety: 0 },
-      cultureFitScore: 9.2,
-      productivityScore: 9.8,
-      performanceCategory: "HP",
+      slug: "drive-forward",
+      name: "Drive Forward",
+      description: "Always look ahead — anticipate the next bottleneck.",
+      behaviors: ["Plans two routes ahead", "Spots problems while they're still small"],
+      order: 3,
+    },
+    {
+      slug: "one-team-one-route",
+      name: "One Team, One Route",
+      description: "Hand-offs are sacred — coordination wins over heroics.",
+      behaviors: ["Closes loops between dispatch, fleet, and customers", "Pulls peers in early"],
+      order: 4,
+    },
+    {
+      slug: "own-the-mile",
+      name: "Own the Mile",
+      description: "Every handoff is personal — the load is yours until it isn't.",
+      behaviors: ["Sees the load through, not just the lane", "Sweats the last detail"],
+      order: 5,
     },
   ],
 
-  // ─── Alex (Analyst) — Q1 only ───────────────────────────────────────
-  analyst: [
-    {
-      fiscalYear: 2026, fiscalQuarter: 1,
-      cultureFitRatings: {
-        "customer-obsession": "lives",
-        "take-ownership":     "occasional",
-        "move-with-urgency":  "occasional",
-        "build-together":     "frequent",
-        "question-everything": "frequent",
+  targetsByUser: {
+    cfo: [
+      { slug: "cash-conversion", name: "Cash Conversion Cycle Days", type: "smaller", unit: "units",      weight: 40, target: 30,      min: 30,      max: 60 },
+      { slug: "ar-aging",        name: "AR Over 60 Days %",          type: "smaller", unit: "percentage", weight: 35, target: 5,       min: 5,       max: 15 },
+      { slug: "opex-variance",   name: "Opex Variance to Plan %",    type: "smaller", unit: "percentage", weight: 25, target: 2,       min: 2,       max: 8 },
+    ],
+    coo: [
+      { slug: "on-time-pickup",  name: "On-Time Pickup %",           type: "bigger",  unit: "percentage", weight: 40, target: 97,      min: 85,      max: 97 },
+      { slug: "fleet-util",      name: "Fleet Utilization %",        type: "bigger",  unit: "percentage", weight: 35, target: 85,      min: 70,      max: 85 },
+      { slug: "cost-per-mile",   name: "Cost per Mile",              type: "smaller", unit: "dollars",    weight: 25, target: 1.20,    min: 1.20,    max: 2.00 },
+    ],
+    "vp-cs": [
+      { slug: "nps",             name: "Customer NPS",               type: "bigger",  unit: "units",      weight: 40, target: 60,      min: 30,      max: 60 },
+      { slug: "retention",       name: "Customer Retention %",       type: "bigger",  unit: "percentage", weight: 35, target: 95,      min: 85,      max: 95 },
+      { slug: "response-time",   name: "Avg Response Time Hours",    type: "smaller", unit: "units",      weight: 25, target: 2,       min: 2,       max: 8 },
+    ],
+    "vp-fleet": [
+      { slug: "driver-retention", name: "Driver Retention %",        type: "bigger",  unit: "percentage", weight: 40, target: 85,      min: 65,      max: 85 },
+      { slug: "maint-on-time",   name: "Preventive Maintenance On-Time %", type: "bigger", unit: "percentage", weight: 35, target: 95, min: 80, max: 95 },
+      { slug: "accidents",       name: "Recordable Accidents",       type: "smaller", unit: "units",      weight: 25, target: 0,       min: 0,       max: 4 },
+    ],
+    analyst: [
+      { slug: "reports-otp",     name: "Reports Delivered On Time %", type: "bigger",  unit: "percentage", weight: 50, target: 100,     min: 90,      max: 100 },
+      { slug: "data-accuracy",   name: "Data Accuracy %",            type: "bigger",  unit: "percentage", weight: 30, target: 99,      min: 92,      max: 99 },
+      { slug: "analyses-count",  name: "Analyses per Quarter",       type: "bigger",  unit: "units",      weight: 20, target: 18,      min: 12,      max: 18 },
+    ],
+  },
+
+  assessmentsByUser: {
+    // ─── Eli (CFO) — UP ────────────────────────────────────────────────
+    cfo: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "deliver-on-promise": "lives",
+          "earn-trust-daily":   "lives",
+          "drive-forward":      "occasional",
+          "one-team-one-route": "lives",
+          "own-the-mile":       "lives",
+        },
+        productivityActuals: { "cash-conversion": 45, "ar-aging": 10, "opex-variance": 5 },
+        cultureFitScore: 8.4, // occasional cap
+        productivityScore: 6.8,
+        performanceCategory: "MP",
       },
-      productivityActuals: { "report-on-time": 95, rework: 1, throughput: 22 },
-      cultureFitScore: 5.4, // raw avg below frequent cap of 7.4, so cap is moot
-      productivityScore: 8.8,
-      performanceCategory: "LCF",
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "deliver-on-promise": "lives",
+          "earn-trust-daily":   "lives",
+          "drive-forward":      "lives",
+          "one-team-one-route": "lives",
+          "own-the-mile":       "lives",
+        },
+        productivityActuals: { "cash-conversion": 38, "ar-aging": 8, "opex-variance": 4 },
+        cultureFitScore: 9.0,
+        productivityScore: 7.8,
+        performanceCategory: "MP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "deliver-on-promise": "models",
+          "earn-trust-daily":   "lives",
+          "drive-forward":      "lives",
+          "one-team-one-route": "lives",
+          "own-the-mile":       "lives",
+        },
+        productivityActuals: { "cash-conversion": 32, "ar-aging": 6, "opex-variance": 2.5 },
+        cultureFitScore: 9.2,
+        productivityScore: 9.2,
+        performanceCategory: "HP",
+      },
+    ],
+
+    // ─── Maya (COO) — DOWN ─────────────────────────────────────────────
+    coo: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "deliver-on-promise": "models",
+          "earn-trust-daily":   "models",
+          "drive-forward":      "lives",
+          "one-team-one-route": "lives",
+          "own-the-mile":       "lives",
+        },
+        productivityActuals: { "on-time-pickup": 97, "fleet-util": 86, "cost-per-mile": 1.18 },
+        cultureFitScore: 9.4,
+        productivityScore: 10,
+        performanceCategory: "HP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "deliver-on-promise": "lives",
+          "earn-trust-daily":   "lives",
+          "drive-forward":      "lives",
+          "one-team-one-route": "lives",
+          "own-the-mile":       "lives",
+        },
+        productivityActuals: { "on-time-pickup": 93, "fleet-util": 80, "cost-per-mile": 1.40 },
+        cultureFitScore: 9.0,
+        productivityScore: 7.5,
+        performanceCategory: "MP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "deliver-on-promise": "lives",
+          "earn-trust-daily":   "occasional",
+          "drive-forward":      "lives",
+          "one-team-one-route": "lives",
+          "own-the-mile":       "lives",
+        },
+        productivityActuals: { "on-time-pickup": 87, "fleet-util": 75, "cost-per-mile": 1.75 },
+        cultureFitScore: 8.4, // occasional cap
+        productivityScore: 5.0,
+        performanceCategory: "LP",
+      },
+    ],
+
+    // ─── Andre (VP CS) — Q1 only, MP ───────────────────────────────────
+    "vp-cs": [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "deliver-on-promise": "lives",
+          "earn-trust-daily":   "lives",
+          "drive-forward":      "lives",
+          "one-team-one-route": "lives",
+          "own-the-mile":       "occasional",
+        },
+        productivityActuals: { nps: 42, retention: 90, "response-time": 4 },
+        cultureFitScore: 8.4, // occasional cap
+        productivityScore: 7.5,
+        performanceCategory: "MP",
+      },
+    ],
+
+    // ─── Sofia (VP Fleet) — Q1 only, LCF ───────────────────────────────
+    "vp-fleet": [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "deliver-on-promise": "lives",
+          "earn-trust-daily":   "frequent",
+          "drive-forward":      "occasional",
+          "one-team-one-route": "frequent",
+          "own-the-mile":       "occasional",
+        },
+        productivityActuals: { "driver-retention": 80, "maint-on-time": 92, accidents: 1 },
+        cultureFitScore: 5.0, // raw avg well below frequent cap of 7.4
+        productivityScore: 7.8,
+        performanceCategory: "LCF",
+      },
+    ],
+
+    // ─── Naomi (Analyst) — Q1 only, HP ─────────────────────────────────
+    analyst: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "deliver-on-promise": "models",
+          "earn-trust-daily":   "models",
+          "drive-forward":      "lives",
+          "one-team-one-route": "models",
+          "own-the-mile":       "lives",
+        },
+        productivityActuals: { "reports-otp": 100, "data-accuracy": 99.5, "analyses-count": 20 },
+        cultureFitScore: 9.6,
+        productivityScore: 10,
+        performanceCategory: "HP",
+      },
+    ],
+  },
+};
+
+// ────────────────────────────────────────────────────────────────────────────
+// TENANT 3 — CRESCENT CONSULTING (fiscal year starts October)
+// ────────────────────────────────────────────────────────────────────────────
+// Trajectories:
+//   cfo         — Theo Nakamura  — STABLE: HP → HP → HP  (rock-solid)
+//   coo         — Rashida Ahmed  — DOWN:   MP → LP → LCF (culture deteriorates)
+//   vp-practice — Felix Garcia   — Q1 only, HP           (strong baseline)
+//   vp-delivery — Aisha Khan     — UP:     LCF → LP → MP (real recovery)
+//   analyst     — Wei Liu        — Q1 only, LP           (output gap)
+
+const CRESCENT: TenantSeed = {
+  companyId: "seed-crescent-consulting",
+  companyName: "Crescent Consulting",
+  fiscalYearStartMonth: 10,
+  sltTeamId: "seed-crescent-team-slt",
+  functionalTeamId: "seed-crescent-team-delivery",
+  functionalTeamName: "Delivery Team",
+
+  users: [
+    {
+      slug: "ceo",
+      displayName: "Olivia Brennan",
+      email: "olivia.brennan@crescent-test.example.com",
+      role: "company_admin",
+      title: "CEO",
+      teamSlugs: ["slt"],
+      isAssessed: false,
+    },
+    {
+      slug: "cfo",
+      displayName: "Theo Nakamura",
+      email: "theo.nakamura@crescent-test.example.com",
+      role: "senior_leader",
+      title: "CFO",
+      teamSlugs: ["slt"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "coo",
+      displayName: "Rashida Ahmed",
+      email: "rashida.ahmed@crescent-test.example.com",
+      role: "senior_leader",
+      title: "COO",
+      teamSlugs: ["slt", "functional"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "vp-practice",
+      displayName: "Felix Garcia",
+      email: "felix.garcia@crescent-test.example.com",
+      role: "senior_leader",
+      title: "VP Consulting Practice",
+      teamSlugs: ["slt"],
+      isAssessed: true,
+      assessedInTeam: "slt",
+      reportsToSlug: "ceo",
+    },
+    {
+      slug: "vp-delivery",
+      displayName: "Aisha Khan",
+      email: "aisha.khan@crescent-test.example.com",
+      role: "leader",
+      title: "VP Delivery",
+      teamSlugs: ["functional"],
+      isAssessed: true,
+      assessedInTeam: "functional",
+      reportsToSlug: "coo",
+    },
+    {
+      slug: "analyst",
+      displayName: "Wei Liu",
+      email: "wei.liu@crescent-test.example.com",
+      role: "leader",
+      title: "Engagement Analyst",
+      teamSlugs: ["functional"],
+      isAssessed: true,
+      assessedInTeam: "functional",
+      reportsToSlug: "coo",
     },
   ],
+
+  coreValues: [
+    {
+      slug: "client-first-always",
+      name: "Client First, Always",
+      description: "The work is the client's, not ours.",
+      behaviors: ["Reframes problems from the client's seat", "Pushes back on internal preferences when they don't serve the client"],
+      order: 1,
+    },
+    {
+      slug: "speak-the-hard-truth",
+      name: "Speak the Hard Truth",
+      description: "Tell the client what they need to hear, kindly.",
+      behaviors: ["Names the elephant in the room", "Disagrees with the room, not the person"],
+      order: 2,
+    },
+    {
+      slug: "sharper-every-day",
+      name: "Sharper Every Day",
+      description: "Practice is never finished; the craft compounds.",
+      behaviors: ["Asks for feedback after every deliverable", "Reads outside their specialty"],
+      order: 3,
+    },
+    {
+      slug: "generosity-in-knowledge",
+      name: "Generosity in Knowledge",
+      description: "Share what you learn — the practice grows when knowledge does.",
+      behaviors: ["Writes up insights for the team", "Mentors without being asked"],
+      order: 4,
+    },
+    {
+      slug: "outcomes-over-hours",
+      name: "Outcomes over Hours",
+      description: "Results matter; effort is the price, not the product.",
+      behaviors: ["Ends meetings when decisions are made", "Says no to busywork that won't move the outcome"],
+      order: 5,
+    },
+  ],
+
+  targetsByUser: {
+    cfo: [
+      { slug: "utilization-rate", name: "Billable Utilization %",     type: "bigger",  unit: "percentage", weight: 40, target: 80,      min: 65,      max: 80 },
+      { slug: "project-margin",   name: "Project Margin %",           type: "bigger",  unit: "percentage", weight: 35, target: 35,      min: 25,      max: 35 },
+      { slug: "dso",              name: "Days Sales Outstanding",     type: "smaller", unit: "units",      weight: 25, target: 45,      min: 45,      max: 75 },
+    ],
+    coo: [
+      { slug: "delivery-quality", name: "Delivery Quality Score",     type: "bigger",  unit: "units",      weight: 40, target: 9,       min: 6,       max: 9 },
+      { slug: "staff-engagement", name: "Staff Engagement Score",     type: "bigger",  unit: "units",      weight: 30, target: 85,      min: 65,      max: 85 },
+      { slug: "pmo-on-time",      name: "PMO Milestones On Time %",   type: "bigger",  unit: "percentage", weight: 30, target: 95,      min: 80,      max: 95 },
+    ],
+    "vp-practice": [
+      { slug: "new-bookings",     name: "New Engagement Bookings",    type: "bigger",  unit: "dollars",    weight: 50, target: 4000000, min: 2500000, max: 4000000 },
+      { slug: "pipeline-cov",     name: "Pipeline Coverage Ratio",    type: "bigger",  unit: "units",      weight: 30, target: 3,       min: 1.5,     max: 3 },
+      { slug: "proposal-win",     name: "Proposal Win Rate %",        type: "bigger",  unit: "percentage", weight: 20, target: 45,      min: 25,      max: 45 },
+    ],
+    "vp-delivery": [
+      { slug: "on-time-delivery", name: "Engagement On-Time Delivery %", type: "bigger", unit: "percentage", weight: 40, target: 95, min: 80, max: 95 },
+      { slug: "client-csat",      name: "Client CSAT Score",          type: "bigger",  unit: "units",      weight: 35, target: 9,       min: 6,       max: 9 },
+      { slug: "rework-rate",      name: "Rework Rate %",              type: "smaller", unit: "percentage", weight: 25, target: 3,       min: 3,       max: 12 },
+    ],
+    analyst: [
+      { slug: "engagement-cov",   name: "Engagements Supported per Quarter", type: "bigger", unit: "units", weight: 50, target: 6, min: 3, max: 6 },
+      { slug: "analysis-acc",     name: "Analysis Accuracy Score",    type: "bigger",  unit: "units",      weight: 30, target: 9,       min: 6,       max: 9 },
+      { slug: "turnaround",       name: "Avg Turnaround Days",        type: "smaller", unit: "units",      weight: 20, target: 3,       min: 3,       max: 10 },
+    ],
+  },
+
+  assessmentsByUser: {
+    // ─── Theo (CFO) — STABLE HP ────────────────────────────────────────
+    cfo: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "client-first-always":     "models",
+          "speak-the-hard-truth":    "models",
+          "sharper-every-day":       "models",
+          "generosity-in-knowledge": "models",
+          "outcomes-over-hours":     "models",
+        },
+        productivityActuals: { "utilization-rate": 82, "project-margin": 37, dso: 42 },
+        cultureFitScore: 10,
+        productivityScore: 10,
+        performanceCategory: "HP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "client-first-always":     "models",
+          "speak-the-hard-truth":    "models",
+          "sharper-every-day":       "models",
+          "generosity-in-knowledge": "models",
+          "outcomes-over-hours":     "models",
+        },
+        productivityActuals: { "utilization-rate": 80, "project-margin": 36, dso: 44 },
+        cultureFitScore: 10,
+        productivityScore: 9.8,
+        performanceCategory: "HP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "client-first-always":     "models",
+          "speak-the-hard-truth":    "models",
+          "sharper-every-day":       "models",
+          "generosity-in-knowledge": "models",
+          "outcomes-over-hours":     "lives",
+        },
+        productivityActuals: { "utilization-rate": 81, "project-margin": 35, dso: 45 },
+        cultureFitScore: 9.8,
+        productivityScore: 9.5,
+        performanceCategory: "HP",
+      },
+    ],
+
+    // ─── Rashida (COO) — DOWN to LCF ───────────────────────────────────
+    coo: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "client-first-always":     "lives",
+          "speak-the-hard-truth":    "occasional",
+          "sharper-every-day":       "lives",
+          "generosity-in-knowledge": "lives",
+          "outcomes-over-hours":     "lives",
+        },
+        productivityActuals: { "delivery-quality": 7, "staff-engagement": 75, "pmo-on-time": 88 },
+        cultureFitScore: 8.4, // occasional cap
+        productivityScore: 7.5,
+        performanceCategory: "MP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "client-first-always":     "lives",
+          "speak-the-hard-truth":    "occasional",
+          "sharper-every-day":       "occasional",
+          "generosity-in-knowledge": "lives",
+          "outcomes-over-hours":     "lives",
+        },
+        productivityActuals: { "delivery-quality": 6, "staff-engagement": 68, "pmo-on-time": 82 },
+        cultureFitScore: 8.0, // still capped at occasional
+        productivityScore: 5.5,
+        performanceCategory: "LP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "client-first-always":     "occasional",
+          "speak-the-hard-truth":    "frequent",
+          "sharper-every-day":       "frequent",
+          "generosity-in-knowledge": "occasional",
+          "outcomes-over-hours":     "lives",
+        },
+        productivityActuals: { "delivery-quality": 7, "staff-engagement": 70, "pmo-on-time": 85 },
+        cultureFitScore: 5.0, // raw avg well below frequent cap
+        productivityScore: 7.0,
+        performanceCategory: "LCF",
+      },
+    ],
+
+    // ─── Felix (VP Practice) — Q1 only, HP ─────────────────────────────
+    "vp-practice": [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "client-first-always":     "models",
+          "speak-the-hard-truth":    "models",
+          "sharper-every-day":       "models",
+          "generosity-in-knowledge": "lives",
+          "outcomes-over-hours":     "models",
+        },
+        productivityActuals: { "new-bookings": 4200000, "pipeline-cov": 3.2, "proposal-win": 48 },
+        cultureFitScore: 9.8,
+        productivityScore: 10,
+        performanceCategory: "HP",
+      },
+    ],
+
+    // ─── Aisha (VP Delivery) — UP from LCF ─────────────────────────────
+    "vp-delivery": [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "client-first-always":     "lives",
+          "speak-the-hard-truth":    "frequent",
+          "sharper-every-day":       "frequent",
+          "generosity-in-knowledge": "lives",
+          "outcomes-over-hours":     "occasional",
+        },
+        productivityActuals: { "on-time-delivery": 85, "client-csat": 7, "rework-rate": 8 },
+        cultureFitScore: 5.4, // raw avg below frequent cap of 7.4
+        productivityScore: 7.0,
+        performanceCategory: "LCF",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 2,
+        cultureFitRatings: {
+          "client-first-always":     "lives",
+          "speak-the-hard-truth":    "occasional",
+          "sharper-every-day":       "occasional",
+          "generosity-in-knowledge": "lives",
+          "outcomes-over-hours":     "lives",
+        },
+        productivityActuals: { "on-time-delivery": 85, "client-csat": 7, "rework-rate": 10 },
+        cultureFitScore: 8.0,
+        productivityScore: 5.5,
+        performanceCategory: "LP",
+      },
+      {
+        fiscalYear: 2026, fiscalQuarter: 3,
+        cultureFitRatings: {
+          "client-first-always":     "lives",
+          "speak-the-hard-truth":    "lives",
+          "sharper-every-day":       "lives",
+          "generosity-in-knowledge": "lives",
+          "outcomes-over-hours":     "lives",
+        },
+        productivityActuals: { "on-time-delivery": 90, "client-csat": 8, "rework-rate": 6 },
+        cultureFitScore: 9.0,
+        productivityScore: 7.5,
+        performanceCategory: "MP",
+      },
+    ],
+
+    // ─── Wei (Analyst) — Q1 only, LP ───────────────────────────────────
+    analyst: [
+      {
+        fiscalYear: 2026, fiscalQuarter: 1,
+        cultureFitRatings: {
+          "client-first-always":     "lives",
+          "speak-the-hard-truth":    "lives",
+          "sharper-every-day":       "lives",
+          "generosity-in-knowledge": "lives",
+          "outcomes-over-hours":     "lives",
+        },
+        productivityActuals: { "engagement-cov": 3, "analysis-acc": 7, turnaround: 9 },
+        cultureFitScore: 9.0,
+        productivityScore: 5.0,
+        performanceCategory: "LP",
+      },
+    ],
+  },
+};
+
+const TENANTS: TenantSeed[] = [AURORA, BEACON, CRESCENT];
+
+// ────────────────────────────────────────────────────────────────────────────
+// GLOBAL SUPERADMIN (not tied to any tenant)
+// ────────────────────────────────────────────────────────────────────────────
+// Email convention: first.last@tds-test.example.com — the "tds-test" domain
+// is intentional. He spans tenants, so a tenant-specific domain would be
+// misleading. Password is COMMON_PASSWORD (same as every other seeded user).
+
+const SUPERADMIN: SeedSuperadmin = {
+  displayName: "Mike Goldman",
+  email: "mike.goldman@tds-test.example.com",
 };
 
 // Coach defaults — verbatim from src/lib/coach-service.ts ensureDefaultCoaches().
 // Kept inline so this script can run against a clean staging DB without
-// needing client-SDK code paths.
+// needing client-SDK code paths. Coaches are global, not tenant-scoped.
 const DEFAULT_COACHES = [
   {
     name: "People Coach",
@@ -666,6 +1331,7 @@ function runSafetyChecks(sa: ServiceAccountShape): void {
   console.log(`  client_email:                          ${sa.client_email}`);
   console.log(`  Expected staging project_id:           ${EXPECTED_STAGING_PROJECT_ID}`);
   console.log(`  Production project_id (forbidden):     ${PRODUCTION_PROJECT_ID}`);
+  console.log(`  Tenants to seed:                       ${TENANTS.map((t) => t.companyName).join(", ")}`);
 
   if (sa.project_id === PRODUCTION_PROJECT_ID) {
     console.error("\n❌ ABORT: service account points at TDS PRODUCTION.");
@@ -686,6 +1352,43 @@ function runSafetyChecks(sa: ServiceAccountShape): void {
   console.log("\n  ✓ Safety checks passed. Target is confirmed staging.");
   if (!APPLY) {
     console.log("  ✓ DRY RUN — no writes will be performed.");
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// PRE-FLIGHT TENANT DATA SANITY CHECKS
+// ────────────────────────────────────────────────────────────────────────────
+
+function validateTenantData(): void {
+  for (const t of TENANTS) {
+    // Targets per assessed member must sum to 100.
+    for (const u of t.users.filter((x) => x.isAssessed)) {
+      const targets = t.targetsByUser[u.slug];
+      if (!targets) {
+        console.error(`❌ ABORT: tenant "${t.companyId}" missing targets for assessed user "${u.slug}".`);
+        process.exit(3);
+      }
+      const sum = targets.reduce((s, x) => s + x.weight, 0);
+      if (sum !== 100) {
+        console.error(`❌ ABORT: targets for "${t.companyId}/${u.slug}" sum to ${sum}, not 100.`);
+        process.exit(3);
+      }
+    }
+    // Every assessment's cultureFitRatings must cover all the tenant's CV slugs.
+    const cvSlugs = t.coreValues.map((cv) => cv.slug);
+    for (const u of t.users.filter((x) => x.isAssessed)) {
+      const history = t.assessmentsByUser[u.slug] ?? [];
+      for (const a of history) {
+        for (const s of cvSlugs) {
+          if (!(s in a.cultureFitRatings)) {
+            console.error(
+              `❌ ABORT: tenant "${t.companyId}" assessment for "${u.slug}" FY${a.fiscalYear}Q${a.fiscalQuarter} is missing CF rating for "${s}".`
+            );
+            process.exit(3);
+          }
+        }
+      }
+    }
   }
 }
 
@@ -730,17 +1433,17 @@ async function wipeCompany(companyId: string): Promise<void> {
 // CREATE — COMPANY
 // ────────────────────────────────────────────────────────────────────────────
 
-async function createCompany(): Promise<string> {
-  const ref = db.doc(`companies/${COMPANY_ID}`);
+async function createCompany(tenant: TenantSeed): Promise<string> {
+  const ref = db.doc(`companies/${tenant.companyId}`);
   const snap = await ref.get();
   if (snap.exists) {
-    logSkip(`Company "${COMPANY_NAME}"`, COMPANY_ID);
-    return COMPANY_ID;
+    logSkip(`Company "${tenant.companyName}"`, tenant.companyId);
+    return tenant.companyId;
   }
 
   const payload = {
-    name: COMPANY_NAME,
-    fiscalYearStartMonth: 1,
+    name: tenant.companyName,
+    fiscalYearStartMonth: tenant.fiscalYearStartMonth,
     scoringParameters: {
       hpCultureFitMin: 9,
       hpProductivityMin: 9,
@@ -754,13 +1457,13 @@ async function createCompany(): Promise<string> {
   };
 
   if (!APPLY) {
-    logWouldCreate(`Company "${COMPANY_NAME}"`, COMPANY_ID);
-    return COMPANY_ID;
+    logWouldCreate(`Company "${tenant.companyName}"`, tenant.companyId);
+    return tenant.companyId;
   }
 
   await ref.set(payload);
-  logCreate(`Company "${COMPANY_NAME}"`, COMPANY_ID);
-  return COMPANY_ID;
+  logCreate(`Company "${tenant.companyName}"`, tenant.companyId);
+  return tenant.companyId;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1185,31 +1888,51 @@ async function seedDefaultCoaches(): Promise<void> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// MAIN
+// SEED THE GLOBAL SUPERADMIN
+// ────────────────────────────────────────────────────────────────────────────
+// Idempotency: ensureAuthAccount() reuses an existing Auth user by email;
+// createUser() with role "superadmin" check-before-writes both /superadmin/{uid}
+// and /userMappings/{uid}. The /superadmin/{uid} doc ID is the Firebase Auth
+// uid (matches the recon's superadmin pattern and how createUser() already
+// writes it). Per recon: no /companies/{cid}/users doc is written for a
+// superadmin (companyId is null and createUser skips that branch).
+
+async function seedSuperadmin(sa: SeedSuperadmin): Promise<void> {
+  banner(`GLOBAL — SUPERADMIN: ${sa.displayName}`);
+  section("AUTH + /userMappings + /superadmin");
+
+  const { uid, createdFresh } = await ensureAuthAccount(sa.email, sa.displayName);
+  logInfo(`Superadmin uid: ${uid} (doc IDs: /superadmin/${uid}, /userMappings/${uid})`);
+
+  await createUser({
+    uid,
+    email: sa.email,
+    displayName: sa.displayName,
+    role: "superadmin",
+    companyId: null,        // global — no company users doc
+    teamIds: [],            // global — no team membership
+    createdAuthFresh: createdFresh,
+  });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SEED ONE TENANT
 // ────────────────────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
-  loadDotEnvLocal();
-  const sa = loadStagingServiceAccount();
-  runSafetyChecks(sa);
-  initAdmin(sa);
-
-  // ── Optional wipe ──────────────────────────────────────────────────
-  if (WIPE) {
-    await wipeCompany(COMPANY_ID);
-  }
+async function seedTenant(tenant: TenantSeed): Promise<void> {
+  banner(`TENANT — ${tenant.companyName} (FY starts month ${tenant.fiscalYearStartMonth})`);
 
   // ── Company ────────────────────────────────────────────────────────
   section("COMPANY");
-  await createCompany();
+  await createCompany(tenant);
 
   // ── Users (Auth + Firestore fan-out) ───────────────────────────────
   section("USERS (Auth + userMappings + per-company users)");
   const userUidBySlug = new Map<string, string>();
 
-  for (const u of USERS) {
+  for (const u of tenant.users) {
     const teamIds = u.teamSlugs.map((s) =>
-      s === "slt" ? SLT_TEAM_ID : OPS_TEAM_ID
+      s === "slt" ? tenant.sltTeamId : tenant.functionalTeamId
     );
     const { uid, createdFresh } = await ensureAuthAccount(u.email, u.displayName);
     userUidBySlug.set(u.slug, uid);
@@ -1218,7 +1941,7 @@ async function main(): Promise<void> {
       email: u.email,
       displayName: u.displayName,
       role: u.role,
-      companyId: COMPANY_ID,
+      companyId: tenant.companyId,
       teamIds,
       createdAuthFresh: createdFresh,
     });
@@ -1228,39 +1951,41 @@ async function main(): Promise<void> {
   section("TEAMS");
   const ceoUid = userUidBySlug.get("ceo")!;
   const cooUid = userUidBySlug.get("coo")!;
+  const ceoUser = tenant.users.find((u) => u.slug === "ceo")!;
+  const cooUser = tenant.users.find((u) => u.slug === "coo")!;
 
   await createTeam({
-    companyId: COMPANY_ID,
-    teamId: SLT_TEAM_ID,
+    companyId: tenant.companyId,
+    teamId: tenant.sltTeamId,
     name: "Senior Leadership Team",
     parentTeamId: null,
     level: 0,
     leaderId: ceoUid,
-    leaderName: USERS.find((u) => u.slug === "ceo")!.displayName,
-    leaderTitle: USERS.find((u) => u.slug === "ceo")!.title,
+    leaderName: ceoUser.displayName,
+    leaderTitle: ceoUser.title,
   });
   await createTeam({
-    companyId: COMPANY_ID,
-    teamId: OPS_TEAM_ID,
-    name: "Operations Team",
-    parentTeamId: SLT_TEAM_ID,
+    companyId: tenant.companyId,
+    teamId: tenant.functionalTeamId,
+    name: tenant.functionalTeamName,
+    parentTeamId: tenant.sltTeamId,
     level: 1,
     leaderId: cooUid,
-    leaderName: USERS.find((u) => u.slug === "coo")!.displayName,
-    leaderTitle: USERS.find((u) => u.slug === "coo")!.title,
+    leaderName: cooUser.displayName,
+    leaderTitle: cooUser.title,
   });
 
   // ── Team Members (linked to app users for the assessed ones) ───────
   section("TEAM MEMBERS");
   const memberIdBySlug = new Map<string, string>();
 
-  for (const u of USERS.filter((x) => x.isAssessed)) {
-    const memberId = `seed-member-${u.slug}`;
+  for (const u of tenant.users.filter((x) => x.isAssessed)) {
+    const memberId = `seed-member-${tenant.companyId}-${u.slug}`;
     memberIdBySlug.set(u.slug, memberId);
-    const teamId = u.assessedInTeam === "slt" ? SLT_TEAM_ID : OPS_TEAM_ID;
+    const teamId = u.assessedInTeam === "slt" ? tenant.sltTeamId : tenant.functionalTeamId;
     const reportsToUid = userUidBySlug.get(u.reportsToSlug!)!;
     await createTeamMember({
-      companyId: COMPANY_ID,
+      companyId: tenant.companyId,
       memberId,
       name: u.displayName,
       role: u.title,
@@ -1274,11 +1999,11 @@ async function main(): Promise<void> {
   // ── Core Values ────────────────────────────────────────────────────
   section("CORE VALUES");
   const coreValueIdBySlug = new Map<string, string>();
-  for (const cv of CORE_VALUES) {
-    const id = `seed-cv-${cv.slug}`;
+  for (const cv of tenant.coreValues) {
+    const id = `seed-cv-${tenant.companyId}-${cv.slug}`;
     coreValueIdBySlug.set(cv.slug, id);
     await createCoreValue({
-      companyId: COMPANY_ID,
+      companyId: tenant.companyId,
       valueId: id,
       name: cv.name,
       description: cv.description,
@@ -1290,26 +2015,16 @@ async function main(): Promise<void> {
   // ── Productivity Targets ───────────────────────────────────────────
   section("PRODUCTIVITY TARGETS");
   const targetIdByUserSlugAndTargetSlug = new Map<string, string>();
-  for (const [userSlug, targets] of Object.entries(TARGETS_BY_USER)) {
+  for (const [userSlug, targets] of Object.entries(tenant.targetsByUser)) {
     const memberId = memberIdBySlug.get(userSlug);
     if (!memberId) continue;
-    const sum = targets.reduce((s, t) => s + t.weight, 0);
-    if (sum !== 100) {
-      console.error(`❌ ABORT: targets for "${userSlug}" sum to ${sum}, not 100.`);
-      process.exit(3);
-    }
-    targets.forEach((t, idx) => {
-      const targetId = `seed-pt-${userSlug}-${t.slug}`;
-      targetIdByUserSlugAndTargetSlug.set(`${userSlug}::${t.slug}`, targetId);
-      // fire-and-await sequentially for predictable log ordering
-      // (a Promise.all would interleave logs across members)
-      void 0;
-    });
+    // Weights are pre-validated by validateTenantData(); just write.
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i];
-      const targetId = `seed-pt-${userSlug}-${t.slug}`;
+      const targetId = `seed-pt-${tenant.companyId}-${userSlug}-${t.slug}`;
+      targetIdByUserSlugAndTargetSlug.set(`${userSlug}::${t.slug}`, targetId);
       await createProductivityTarget({
-        companyId: COMPANY_ID,
+        companyId: tenant.companyId,
         targetId,
         memberId,
         name: t.name,
@@ -1326,14 +2041,14 @@ async function main(): Promise<void> {
 
   // ── Assessments (multi-quarter for some, Q1-only for others) ───────
   section(`ASSESSMENTS — FY${FISCAL_YEAR} Q1–Q3 (mixed history depth)`);
-  for (const u of USERS.filter((x) => x.isAssessed)) {
+  for (const u of tenant.users.filter((x) => x.isAssessed)) {
     const memberId = memberIdBySlug.get(u.slug)!;
     const reportsToUid = userUidBySlug.get(u.reportsToSlug!)!;
-    const history = ASSESSMENTS_BY_USER[u.slug] ?? [];
-    const targets = TARGETS_BY_USER[u.slug] ?? [];
+    const history = tenant.assessmentsByUser[u.slug] ?? [];
+    const targets = tenant.targetsByUser[u.slug] ?? [];
 
     for (const a of history) {
-      const cultureFitScores = CORE_VALUES.map((cv) => ({
+      const cultureFitScores = tenant.coreValues.map((cv) => ({
         coreValueId: coreValueIdBySlug.get(cv.slug)!,
         coreValueName: cv.name,
         rating: a.cultureFitRatings[cv.slug],
@@ -1348,9 +2063,9 @@ async function main(): Promise<void> {
 
       // Quarter is baked into the doc ID so Q1/Q2/Q3 are distinct docs and
       // check-before-write idempotency holds across re-runs.
-      const assessmentId = `seed-assess-${u.slug}-fy${a.fiscalYear}-q${a.fiscalQuarter}`;
+      const assessmentId = `seed-assess-${tenant.companyId}-${u.slug}-fy${a.fiscalYear}-q${a.fiscalQuarter}`;
       await createAssessment({
-        companyId: COMPANY_ID,
+        companyId: tenant.companyId,
         assessmentId,
         memberId,
         memberName: u.displayName,
@@ -1368,11 +2083,11 @@ async function main(): Promise<void> {
 
   // ── Action Plans (one per assessed member, with sample content) ────
   section("ACTION PLANS");
-  for (const u of USERS.filter((x) => x.isAssessed)) {
+  for (const u of tenant.users.filter((x) => x.isAssessed)) {
     const memberId = memberIdBySlug.get(u.slug)!;
     // Base the action plan on the MOST RECENT quarter — that's what a leader
     // would naturally be acting on.
-    const history = ASSESSMENTS_BY_USER[u.slug] ?? [];
+    const history = tenant.assessmentsByUser[u.slug] ?? [];
     const cat = history[history.length - 1].performanceCategory;
     const owner = u.displayName;
 
@@ -1383,7 +2098,7 @@ async function main(): Promise<void> {
         case "HP":
           return [
             {
-              id: `seed-action-${u.slug}-1`,
+              id: `seed-action-${tenant.companyId}-${u.slug}-1`,
               description: "Identify a stretch project for next quarter.",
               targetDate: `${FISCAL_YEAR}-04-15`,
               completedAt: null,
@@ -1393,8 +2108,8 @@ async function main(): Promise<void> {
         case "MP":
           return [
             {
-              id: `seed-action-${u.slug}-1`,
-              description: "Pair with a HP peer for one quarter on bookings strategy.",
+              id: `seed-action-${tenant.companyId}-${u.slug}-1`,
+              description: "Pair with a HP peer for one quarter on a focused capability.",
               targetDate: `${FISCAL_YEAR}-05-01`,
               completedAt: null,
               owner,
@@ -1403,7 +2118,7 @@ async function main(): Promise<void> {
         case "LP":
           return [
             {
-              id: `seed-action-${u.slug}-1`,
+              id: `seed-action-${tenant.companyId}-${u.slug}-1`,
               description: "30/60/90 plan for output recovery — weekly check-ins.",
               targetDate: `${FISCAL_YEAR}-06-30`,
               completedAt: null,
@@ -1413,7 +2128,7 @@ async function main(): Promise<void> {
         case "LCF":
           return [
             {
-              id: `seed-action-${u.slug}-1`,
+              id: `seed-action-${tenant.companyId}-${u.slug}-1`,
               description: "Difficult conversation re: collaboration behaviors.",
               targetDate: `${FISCAL_YEAR}-04-01`,
               completedAt: null,
@@ -1425,34 +2140,67 @@ async function main(): Promise<void> {
 
     const notes = [
       {
-        id: `seed-note-${u.slug}-1`,
+        id: `seed-note-${tenant.companyId}-${u.slug}-1`,
         actionItemId: null,
         text: `Initial seed note for ${u.displayName} (${cat}).`,
       },
     ];
 
     await createActionPlan({
-      companyId: COMPANY_ID,
-      planId: `seed-plan-${u.slug}`,
+      companyId: tenant.companyId,
+      planId: `seed-plan-${tenant.companyId}-${u.slug}`,
       memberId,
       memberName: u.displayName,
       actions: actions!,
       notes,
     });
   }
+}
 
-  // ── AskMike coaches (global) ───────────────────────────────────────
-  section("ASKMIKE COACHES (global)");
+// ────────────────────────────────────────────────────────────────────────────
+// MAIN
+// ────────────────────────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  loadDotEnvLocal();
+  const sa = loadStagingServiceAccount();
+  runSafetyChecks(sa);
+  validateTenantData();
+  initAdmin(sa);
+
+  // ── Optional wipe (all tenants) ────────────────────────────────────
+  // NOTE: wipe scope is unchanged — only /companies/{cid} is touched.
+  // The superadmin (/superadmin/{uid}, /userMappings/{uid}, Auth) is global
+  // and is never wiped. createUser's check-before-write makes the
+  // superadmin pass idempotent on its own.
+  if (WIPE) {
+    for (const t of TENANTS) {
+      await wipeCompany(t.companyId);
+    }
+  }
+
+  // ── Global superadmin (runs once, before any tenant) ───────────────
+  await seedSuperadmin(SUPERADMIN);
+
+  // ── Tenants (one banner block per tenant) ──────────────────────────
+  for (const t of TENANTS) {
+    await seedTenant(t);
+  }
+
+  // ── AskMike coaches (global, written once) ─────────────────────────
+  banner("GLOBAL — ASKMIKE COACHES");
   await seedDefaultCoaches();
 
   // ── Summary ────────────────────────────────────────────────────────
   banner("SUMMARY");
-  console.log(`  Mode:           ${MODE}`);
-  console.log(`  Created:        ${counters.created}`);
-  console.log(`  Skipped:        ${counters.skipped}`);
-  console.log(`  Would create:   ${counters.wouldCreate}`);
-  console.log(`  Company ID:     ${COMPANY_ID}`);
-  console.log(`  Login password: ${COMMON_PASSWORD}  (every seeded user)`);
+  console.log(`  Mode:            ${MODE}`);
+  console.log(`  Created:         ${counters.created}`);
+  console.log(`  Skipped:         ${counters.skipped}`);
+  console.log(`  Would create:    ${counters.wouldCreate}`);
+  console.log(`  Superadmin:      ${SUPERADMIN.displayName} <${SUPERADMIN.email}>  (global — 1 user, not counted in tenant totals)`);
+  console.log(`  Tenant users:    ${TENANTS.reduce((n, t) => n + t.users.length, 0)} across ${TENANTS.length} tenants`);
+  console.log(`  Tenants:         ${TENANTS.map((t) => `${t.companyName} [${t.companyId}]`).join(", ")}`);
+  console.log(`  Login password:  ${COMMON_PASSWORD}  (every seeded user, superadmin included)`);
   console.log("");
   if (!APPLY) {
     console.log("  This was a DRY RUN. Re-run with --apply to actually write.");
