@@ -5,6 +5,62 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### Migrate transactional email from Resend to Postmark (or similar low-volume specialist)
+
+Discovered: 2026-06-01, in parallel with the same finding on BLT Planner.
+
+TDS sends transactional email through Resend, same as BLT Planner. The Resend shared Amazon SES IP reputation issue applies equally — even with full authentication passing (SPF/DKIM/DMARC), receivers route to spam on a new sending domain. Diagnostic work was completed on the BLT side (see BLT FOLLOWUPS entry "Auth email deliverability — re-diagnosed"); the conclusion applies here without re-investigation.
+
+Verify before scheduling: confirm which domain TDS sends from (check production Netlify env vars on tds-app-b8493 for `SMTP_FROM_EMAIL`). If it's noreply@mike-goldman.com (same as BLT), the two apps share a reputation pool — a single Postmark migration could cover both. If different, TDS migration can be sequenced independently.
+
+Migration scope (~1-2 hours, mirrors BLT's plan):
+- Sign up for / extend Postmark account
+- Verify TDS sending domain on Postmark (DKIM TXT + Return-Path CNAME at Bluehost)
+- Create a Postmark "Server" for the TDS sending stream
+- Update Netlify PRODUCTION env vars on tds-app-b8493 — the specific vars depend on the chosen migration path (see "Code changes" note below)
+- Test end-to-end on production: trigger reset/notification to a Gmail and Outlook inbox, verify delivery and Authentication-Results
+- Revoke TDS Resend API key once verified
+
+Cost: same as BLT — free tier up to 100 emails/month, paid plans from ~$15/mo for 10k emails.
+
+Code changes: YES, expected. Unlike BLT (which uses nodemailer + generic SMTP env vars and is provider-agnostic at the code level), TDS uses the Resend SDK directly (env vars include `EMAIL_FROM`, `EMAIL_FROM_NAME`, `RESEND_API_KEY`). Two viable migration paths: (a) swap Resend SDK calls for Postmark SDK calls (`postmark` npm package) — keeps the API-direct pattern; new env var would be Postmark's server token, replacing `RESEND_API_KEY`. (b) Refactor TDS to use nodemailer + SMTP first (mirroring BLT's pattern), then point it at Postmark via standard `SMTP_*` env vars. Path (a) is the smaller change. Path (b) is more refactoring up front but makes any future provider switch a config-only operation. Decide which before starting.
+
+Best done in tandem with BLT's migration if the sending domain is shared. Not blocking anything urgent (TDS has no live external users yet).
+
+### Set up Firestore backup protection on production (tds-app-b8493)
+
+Discovered: 2026-06-01, in parallel with the same finding on BLT Planner.
+
+Production Firestore on TDS likely has the same total-absence-of-protection that BLT had before this session: no PITR, no delete protection, 1-hour version retention, zero scheduled backups. Inventory needed to confirm, then apply the same recipe.
+
+Inventory (read-only):
+- `gcloud firestore databases list --project=tds-app-b8493` — note location, check pointInTimeRecoveryEnablement / deleteProtectionState / versionRetentionPeriod
+- `gcloud firestore backups schedules list --database='(default)' --project=tds-app-b8493`
+
+If inventory confirms the same gap (likely), apply the same four-layer protection as BLT (see BLT FOLLOWUPS for full reasoning):
+
+1. Enable Delete Protection:
+   `gcloud firestore databases update --database='(default)' --delete-protection --project=tds-app-b8493`
+
+2. Enable Point-in-Time Recovery:
+   `gcloud firestore databases update --database='(default)' --enable-pitr --project=tds-app-b8493`
+
+3. Daily backup schedule (retain 14 days):
+   `gcloud firestore backups schedules create --database='(default)' --recurrence=daily --retention=14d --project=tds-app-b8493`
+
+4. Weekly Sunday backup schedule (retain 84d = 12 weeks):
+   `gcloud firestore backups schedules create --database='(default)' --recurrence=weekly --day-of-week=SUN --retention=84d --project=tds-app-b8493`
+
+Verify by re-running the two inventory commands. Expected end-state: PITR enabled, delete protection enabled, versionRetentionPeriod 604800s (7 days), two backup schedules listed.
+
+Then in a separate follow-on (matches BLT's Step 4): test an actual restore into a throwaway scratch project to verify the recovery path works.
+
+Time: ~30 min for inventory + protection setup; restore test is a separate 1-2 hour session.
+
+Cost: pennies/month for a small-volume free-tier database.
+
+Lower urgency than BLT (TDS has no live external clients yet), but the gap is identical and the recipe is already proven. Worth knocking out at the same priority level since the work is mechanical.
+
 ### Staging email env vars — clean up after Resend rotation
 Discovered 2026-05-21. Phase 4 (staging deploy context configuration) left the staging email config in an ambiguous state:
 
