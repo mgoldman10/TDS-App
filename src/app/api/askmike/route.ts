@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase-admin";
+import { ANTHROPIC_MODEL, ANTHROPIC_VERSION } from "@/lib/ai-config";
 
 export const dynamic = "force-dynamic";
 
@@ -65,10 +66,10 @@ export async function POST(request: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
+        "anthropic-version": ANTHROPIC_VERSION,
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: ANTHROPIC_MODEL,
         max_tokens: 2000,
         system: systemPrompt,
         messages: messages.map((m: { role: string; content: string }) => ({

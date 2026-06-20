@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ANTHROPIC_MODEL, ANTHROPIC_VERSION } from "@/lib/ai-config";
 
 export const dynamic = "force-dynamic";
 
@@ -30,10 +31,10 @@ export async function POST(request: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
+        "anthropic-version": ANTHROPIC_VERSION,
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: ANTHROPIC_MODEL,
         max_tokens: 40,
         system:
           "You write very short titles for coaching conversations. Reply with 4–6 words that capture the topic, in Title Case, with no punctuation or quotation marks. Do not include the words 'coaching' or 'conversation'. Respond with only the title text.",
