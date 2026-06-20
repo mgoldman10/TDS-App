@@ -6,6 +6,12 @@ Add new items at the top. Strike through items as they're shipped.
 ## Open
 
 ### Anthropic model id hardcoded — retirement time-bomb (learning from BLT)
+STATUS: SHIPPED 2026-06-20
+Fix: Centralized Anthropic model config in src/lib/ai-config.ts.
+Replaced hardcoded claude-sonnet-4-20250514 with ANTHROPIC_MODEL
+constant in both AskMike routes (route.ts, title/route.ts).
+Confirmed working in staging (local dev) and production.
+Commits: d65a169 (config), b527dc4 (routes).
 Priority: HIGH — possible live silent outage; verify ASAP.
 Source: 2026-06-20 BLT AskMike outage. BLT hardcoded claude-sonnet-4-20250514,
 which Anthropic RETIRED 2026-06-15; every AI call has 404'd silently since, in
