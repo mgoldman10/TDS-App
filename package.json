@@ -6,7 +6,10 @@
     "dev": "next dev -p 3002",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed:staging": "tsx scripts/seed-staging.ts",
+    "seed:staging:apply": "tsx scripts/seed-staging.ts --apply",
+    "seed:staging:fresh": "tsx scripts/seed-staging.ts --apply --wipe-and-reseed"
   },
   "dependencies": {
     "firebase": "^12.11.0",

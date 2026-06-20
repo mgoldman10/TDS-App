@@ -5,22 +5,80 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
-### Resend production API key rotation — BLOCKED on persistent 401
-Started 2026-05-21. The production Resend key was exposed in chat 2026-05-21 (exposure #5 — Netlify raw API returned the `dev`-context value unmasked; my safety check had only covered the `production` context). Rotation BLOCKED:
+### Anthropic model id hardcoded — retirement time-bomb (learning from BLT)
+Priority: HIGH — possible live silent outage; verify ASAP.
+Source: 2026-06-20 BLT AskMike outage. BLT hardcoded claude-sonnet-4-20250514,
+which Anthropic RETIRED 2026-06-15; every AI call has 404'd silently since, in
+both BLT environments. TDS uses the same Anthropic Messages API server-side and
+may share the pattern.
 
-- THREE auth tests failed 401: two different freshly-generated keys (`re_6aT…`, then `re_JGD…`), the second re-tested after completing Resend's creation flow ("Done"). All three keys were clean 36-byte `re_` format.
-- NOT a paste/format problem (two distinct clean keys both 401'd) and NOT an activation problem (re-test after finalize still 401'd).
-- Leading hypothesis: **Resend account/workspace mismatch** — the key's owning account differs from what the API auth realm expects. Or a key-state issue in Resend (revoked-on-create, scope restriction, etc.).
+Action:
+1. URGENT — grep TDS for any hardcoded Anthropic model id, especially
+   claude-sonnet-4-20250514 or claude-opus-4-20250514 (both retired 06-15). If
+   present, TDS's AI is likely broken right now. Migrate to the current same-tier
+   id (Sonnet -> claude-sonnet-4-6; Opus -> claude-opus-4-8; note Opus has
+   API-breaking sampling-param changes, Sonnet does not).
+2. Centralize the model id in ONE place (env var/constant).
+3. Add alerting on AI-call failures so a future retirement surfaces same-day
+   (ties to the planned TDS AI cost monitoring).
+General principle: silent failures on critical paths need alerting, not just
+logging — assume silence != success.
 
-Diagnostic plan for next session (do these BEFORE more rotation):
+### Migrate transactional email from Resend to Postmark (or similar low-volume specialist)
 
-1. In the Resend dashboard, confirm which ACCOUNT/WORKSPACE owns the originally-exposed (still-live) production key. Generate the new key in that SAME account.
-2. Test the new key using Resend's own docs / API-playground "Try it" panel (key stays in-browser, no curl/temp-file/leak risk). If it returns 200 there but 401 via our curl → our call path is wrong. If it 401s there too → the key isn't valid in that account.
-3. Only after a confirmed-working key: install on production Netlify `RESEND_API_KEY` (production context only, safe curl-config path with token + body both in mode-600 files), SHA-256 verify, redeploy, then REVOKE the old exposed key, verify revocation via the Resend dashboard.
+Discovered: 2026-06-01, in parallel with the same finding on BLT Planner.
 
-New key should have **Sending Access** (not Full Access), domain-scoped if Resend offers that option (least privilege).
+TDS sends transactional email through Resend, same as BLT Planner. The Resend shared Amazon SES IP reputation issue applies equally — even with full authentication passing (SPF/DKIM/DMARC), receivers route to spam on a new sending domain. Diagnostic work was completed on the BLT side (see BLT FOLLOWUPS entry "Auth email deliverability — re-diagnosed"); the conclusion applies here without re-investigation.
 
-Status: **BLOCKED.** Old exposed key still LIVE (not revoked). Risk LOW — Resend keys only authorize email sending; they can't read account data or impersonate. Lowest-severity of the 5 exposures.
+Verify before scheduling: confirm which domain TDS sends from (check production Netlify env vars on tds-app-b8493 for `SMTP_FROM_EMAIL`). If it's noreply@mike-goldman.com (same as BLT), the two apps share a reputation pool — a single Postmark migration could cover both. If different, TDS migration can be sequenced independently.
+
+Migration scope (~1-2 hours, mirrors BLT's plan):
+- Sign up for / extend Postmark account
+- Verify TDS sending domain on Postmark (DKIM TXT + Return-Path CNAME at Bluehost)
+- Create a Postmark "Server" for the TDS sending stream
+- Update Netlify PRODUCTION env vars on tds-app-b8493 — the specific vars depend on the chosen migration path (see "Code changes" note below)
+- Test end-to-end on production: trigger reset/notification to a Gmail and Outlook inbox, verify delivery and Authentication-Results
+- Revoke TDS Resend API key once verified
+
+Cost: same as BLT — free tier up to 100 emails/month, paid plans from ~$15/mo for 10k emails.
+
+Code changes: YES, expected. Unlike BLT (which uses nodemailer + generic SMTP env vars and is provider-agnostic at the code level), TDS uses the Resend SDK directly (env vars include `EMAIL_FROM`, `EMAIL_FROM_NAME`, `RESEND_API_KEY`). Two viable migration paths: (a) swap Resend SDK calls for Postmark SDK calls (`postmark` npm package) — keeps the API-direct pattern; new env var would be Postmark's server token, replacing `RESEND_API_KEY`. (b) Refactor TDS to use nodemailer + SMTP first (mirroring BLT's pattern), then point it at Postmark via standard `SMTP_*` env vars. Path (a) is the smaller change. Path (b) is more refactoring up front but makes any future provider switch a config-only operation. Decide which before starting.
+
+Best done in tandem with BLT's migration if the sending domain is shared. Not blocking anything urgent (TDS has no live external users yet).
+
+### Set up Firestore backup protection on production (tds-app-b8493)
+
+Discovered: 2026-06-01, in parallel with the same finding on BLT Planner.
+
+Production Firestore on TDS likely has the same total-absence-of-protection that BLT had before this session: no PITR, no delete protection, 1-hour version retention, zero scheduled backups. Inventory needed to confirm, then apply the same recipe.
+
+Inventory (read-only):
+- `gcloud firestore databases list --project=tds-app-b8493` — note location, check pointInTimeRecoveryEnablement / deleteProtectionState / versionRetentionPeriod
+- `gcloud firestore backups schedules list --database='(default)' --project=tds-app-b8493`
+
+If inventory confirms the same gap (likely), apply the same four-layer protection as BLT (see BLT FOLLOWUPS for full reasoning):
+
+1. Enable Delete Protection:
+   `gcloud firestore databases update --database='(default)' --delete-protection --project=tds-app-b8493`
+
+2. Enable Point-in-Time Recovery:
+   `gcloud firestore databases update --database='(default)' --enable-pitr --project=tds-app-b8493`
+
+3. Daily backup schedule (retain 14 days):
+   `gcloud firestore backups schedules create --database='(default)' --recurrence=daily --retention=14d --project=tds-app-b8493`
+
+4. Weekly Sunday backup schedule (retain 84d = 12 weeks):
+   `gcloud firestore backups schedules create --database='(default)' --recurrence=weekly --day-of-week=SUN --retention=84d --project=tds-app-b8493`
+
+Verify by re-running the two inventory commands. Expected end-state: PITR enabled, delete protection enabled, versionRetentionPeriod 604800s (7 days), two backup schedules listed.
+
+Then in a separate follow-on (matches BLT's Step 4): test an actual restore into a throwaway scratch project to verify the recovery path works.
+
+Time: ~30 min for inventory + protection setup; restore test is a separate 1-2 hour session.
+
+Cost: pennies/month for a small-volume free-tier database.
+
+Lower urgency than BLT (TDS has no live external clients yet), but the gap is identical and the recipe is already proven. Worth knocking out at the same priority level since the work is mechanical.
 
 ### Staging email env vars — clean up after Resend rotation
 Discovered 2026-05-21. Phase 4 (staging deploy context configuration) left the staging email config in an ambiguous state:
@@ -141,6 +199,15 @@ Fix shape: add a brief save state indicator (likely "Saving..." → "Saved" patt
 Status: open, low-priority Phase 2 polish — UX improvement, not a functional bug.
 
 ## Done
+
+### ~~Resend production API key rotation~~
+Originally noted 2026-05-21. The production TDS Resend key was exposed in chat 2026-05-21 (exposure #5 — Netlify raw API returned the `dev`-context value unmasked; the original safety check had covered only the `production` context).
+
+Rotation was initially blocked: three freshly-generated keys all returned 401 on auth tests, with the leading hypothesis being a Resend account/workspace mismatch (the new keys' owning account differed from where the originally-exposed key lived) rather than a key-format or activation problem.
+
+CLOSED 2026-05-25: rotation is complete. Verified manually in the Resend dashboard 2026-05-25 — the active TDS production key is `TDS-prod-2026-05-22` (created and in active use). NO old or orphaned TDS keys remain in the account; the originally-exposed key from 2026-05-21 is no longer present. The 2026-05-21 transcript-side exposure therefore no longer maps to any live credential. Risk: closed.
+
+(The separate "Staging email env vars — clean up after Resend rotation" follow-up remains genuinely open — the rotation is done but the per-context staging env-var cleanup it referenced wasn't done at the same time. See Open section.)
 
 ### ~~TDS Firestore rules not in source control~~
 Discovered: 2026-05-14
