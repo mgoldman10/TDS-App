@@ -5,6 +5,25 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### Anthropic model id hardcoded — retirement time-bomb (learning from BLT)
+Priority: HIGH — possible live silent outage; verify ASAP.
+Source: 2026-06-20 BLT AskMike outage. BLT hardcoded claude-sonnet-4-20250514,
+which Anthropic RETIRED 2026-06-15; every AI call has 404'd silently since, in
+both BLT environments. TDS uses the same Anthropic Messages API server-side and
+may share the pattern.
+
+Action:
+1. URGENT — grep TDS for any hardcoded Anthropic model id, especially
+   claude-sonnet-4-20250514 or claude-opus-4-20250514 (both retired 06-15). If
+   present, TDS's AI is likely broken right now. Migrate to the current same-tier
+   id (Sonnet -> claude-sonnet-4-6; Opus -> claude-opus-4-8; note Opus has
+   API-breaking sampling-param changes, Sonnet does not).
+2. Centralize the model id in ONE place (env var/constant).
+3. Add alerting on AI-call failures so a future retirement surfaces same-day
+   (ties to the planned TDS AI cost monitoring).
+General principle: silent failures on critical paths need alerting, not just
+logging — assume silence != success.
+
 ### Migrate transactional email from Resend to Postmark (or similar low-volume specialist)
 
 Discovered: 2026-06-01, in parallel with the same finding on BLT Planner.
