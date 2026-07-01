@@ -5,6 +5,34 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### FIREBASE_ADMIN_SERVICE_ACCOUNT: mark Secret in Netlify + rotate service account keys
+Captured: 2026-07-01
+Priority: Medium
+
+The `FIREBASE_ADMIN_SERVICE_ACCOUNT` environment variable grants full Firestore/Auth/Storage admin access. It is currently sitting in Netlify as plain text on both TDS staging and TDS production Netlify projects. It should be marked "Contains secret values" in both.
+
+In addition, generate fresh Firebase Admin SDK service account keys for both TDS Firebase projects — do NOT carry over the existing keys as part of the Secret marking:
+- **TDS staging:** Firebase project `tds-app-staging`
+- **TDS production:** Firebase project `tds-app-b8493`
+
+Apply the lessons from the BLT production rotation (2026-06-27):
+
+- Apple Keychain silently truncates large service-account JSON values — do NOT use Keychain (or any password manager) as an intermediary. Paste directly from a text editor into each of the five Netlify deploy context fields.
+- Netlify Secret-typed env vars cannot use the "same value for all deploy contexts" option — each of the five contexts (production, deploy-preview, branch-deploy, dev, and Preview Server & Agent Runners) must have the value pasted individually.
+- Do a full production sign-in verification after each rotation before revoking the old key.
+- Soak the old key 24–48 hours before revoking, to guard against cached references in Cloud Functions or scheduled jobs.
+
+After each rotation:
+- Revoke the old service account key in GCP Console after the soak window.
+- Securely delete the downloaded JSON key file from the local machine.
+- Do NOT leave a copy in Apple Keychain, notes, or any other credential store.
+
+**Origin:** Separated from BLT's FOLLOWUPS #43 (Firebase Admin service account not marked as secret in Netlify) on 2026-07-01. BLT's Secret marking was completed 2026-06-27, but the TDS portion of that ticket was never actioned. Rather than keep TDS-scoped work on a BLT ticket, it belongs in this repo's backlog. BLT's #43 has been narrowed to BLT-only remaining cleanup (old-key revocation, downloaded-JSON deletion, Keychain-entry fix); this ticket owns the entire TDS-side scope.
+
+**Estimate:** 1–2 hours per project (2–4 hours total), heavily gated by the 24–48h soak between rotation and old-key revocation.
+
+**Verification:** After rotation, verify TDS staging and production sign-in work under the new credentials. Test at least one Firestore read and one Firestore write per environment through the app UI.
+
 ### Anthropic model id hardcoded — retirement time-bomb (learning from BLT)
 STATUS: SHIPPED 2026-06-20
 Fix: Centralized Anthropic model config in src/lib/ai-config.ts.
