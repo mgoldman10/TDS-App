@@ -5,6 +5,15 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### PDF text extraction broken in extract-pdf route (pre-existing bug, unrelated to T-S1)
+Discovered: 2026-07-04, during T-S1 Stage 3 verification
+
+While verifying the new superadmin-only gate on extract-pdf, uploading a real PDF file returns a 500 error. The installed pdf-parse library (version 2.x) has a different interface than the one this route's code was written for, so PDF text extraction has been broken since before Stage 3 — invisible until now because only a superadmin can reach this feature, and it hadn't been recently tested. Word document (.docx) uploads through the same route work correctly; this is specific to PDF files. This bug exists in production too, not just staging.
+
+Fix shape: update the route's PDF-parsing code to match pdf-parse 2.x's actual interface (or pin the library to a compatible older version, whichever is less disruptive).
+
+Status: Open, low priority — affects only an admin-only, infrequently-used feature (uploading reference PDFs for the AI assistant's knowledge base).
+
 ### Cost monitoring on AskMike
 Discovered: 2026-07-04, during T-S1 Stage 3 (mirrors the BLT Planner entry of the same name)
 
