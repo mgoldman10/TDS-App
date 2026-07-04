@@ -1,11 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase-admin";
 import { sendWelcomeEmail } from "@/lib/email";
+import {
+  apiAuthErrorResponse,
+  requireSuperadmin,
+  resolveTargetTenant,
+  verifyApiCaller,
+} from "@/lib/api-auth";
+import type { UserRole } from "@/types/auth";
 
 export const dynamic = "force-dynamic";
 
+// Roles assignable to a company user via this route. Superadmin is NOT here —
+// it is only reachable via the superadmin-only branch in the handler.
+const ASSIGNABLE_ROLES: UserRole[] = ["company_admin", "senior_leader", "leader"];
+
 export async function POST(request: NextRequest) {
   try {
+    const { uid: callerUid } = await verifyApiCaller(request);
+
     const body = await request.json();
     const {
       companyId,
@@ -42,6 +55,25 @@ export async function POST(request: NextRequest) {
         { error: "Company ID is required for non-superadmin users." },
         { status: 400 }
       );
+    }
+
+    // Authorization gate. Creating a superadmin is superadmin-only; creating a
+    // company user requires the caller to be a superadmin or a company_admin of
+    // the target company. companyId from the body is validated, not trusted.
+    if (role === "superadmin") {
+      await requireSuperadmin(callerUid);
+    } else {
+      // companyId is guaranteed present here (validated just above).
+      if (!ASSIGNABLE_ROLES.includes(role as UserRole)) {
+        return NextResponse.json(
+          { error: `role must be one of: ${ASSIGNABLE_ROLES.join(", ")}` },
+          { status: 400 }
+        );
+      }
+      const caller = await resolveTargetTenant(callerUid, companyId!);
+      if (!caller.isSuperadmin && caller.role !== "company_admin") {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
     }
 
     if (leadsExistingTeamId && leadsNewTeam) {
@@ -309,7 +341,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       uid,
-      resetLink,
       reusedExistingAuth: !createdFreshAuthAccount,
       emailSent,
       emailError,
@@ -317,9 +348,13 @@ export async function POST(request: NextRequest) {
       replacedLeaderId,
     });
   } catch (err: unknown) {
-    console.error("User creation error:", err);
-    const message =
-      err instanceof Error ? err.message : "Failed to create user.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      console.error("User creation error:", err);
+      const message =
+        err instanceof Error ? err.message : "Failed to create user.";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 }

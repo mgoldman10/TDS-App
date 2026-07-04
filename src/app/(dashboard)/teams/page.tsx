@@ -28,6 +28,7 @@ import {
 import { getAssessmentHistory } from "@/lib/assessment-service";
 import { getCompanyUsers, getArchivedUsers, updateUserRole, deactivateUser, reactivateUser, updateUserEmail, type ArchivedUser } from "@/lib/user-service";
 import { getFiscalYear, getFiscalQuarter } from "@/lib/fiscalUtils";
+import { bearerHeader } from "@/lib/api-client";
 import { useKeyboardShortcuts } from "@/lib/useKeyboardShortcuts";
 import type { Team, TeamMember } from "@/types/team";
 import type { UserProfile, UserRole } from "@/types/auth";
@@ -513,7 +514,7 @@ export default function TeamsPage() {
         try {
           const res = await fetch("/api/users/create", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
             body: JSON.stringify({
               companyId,
               email: newMemberEmail.trim(),
@@ -641,7 +642,7 @@ export default function TeamsPage() {
     try {
       const res = await fetch("/api/users/create", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({
           companyId,
           email: inviteEmail.trim(),

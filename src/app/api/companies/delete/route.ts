@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase-admin";
+import { apiAuthErrorResponse, requireSuperadmin, verifyApiCaller } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,10 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(request: NextRequest) {
   try {
+    // Permanently deleting a whole tenant is a superadmin-only operation.
+    const { uid: callerUid } = await verifyApiCaller(request);
+    await requireSuperadmin(callerUid);
+
     const { companyId, confirmName } = (await request.json()) as {
       companyId?: string;
       confirmName?: string;
@@ -152,10 +157,14 @@ export async function POST(request: NextRequest) {
       authErrors,
     });
   } catch (err) {
-    console.error("Delete company error:", err);
-    const message =
-      err instanceof Error ? err.message : "Failed to delete company.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      console.error("Delete company error:", err);
+      const message =
+        err instanceof Error ? err.message : "Failed to delete company.";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 }
 

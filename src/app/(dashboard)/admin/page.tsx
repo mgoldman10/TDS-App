@@ -9,6 +9,7 @@ import {
   getArchivedCompanies,
   createCompany,
 } from "@/lib/company-service";
+import { bearerHeader } from "@/lib/api-client";
 import type { Company } from "@/types/company";
 
 export default function AdminPage() {
@@ -155,7 +156,7 @@ export default function AdminPage() {
     try {
       const res = await fetch("/api/companies/delete", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({
           companyId: deletingCompany.id,
           confirmName: deleteConfirmInput,
@@ -187,7 +188,7 @@ export default function AdminPage() {
     try {
       const res = await fetch("/api/users/create", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({
           companyId: null,
           email: saEmail.trim(),

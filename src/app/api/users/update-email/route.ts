@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase-admin";
 import { sendEmailChangedEmail } from "@/lib/email";
+import { apiAuthErrorResponse, resolveTargetTenant, verifyApiCaller } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    const { uid: callerUid } = await verifyApiCaller(request);
+
     const { companyId, userId, newEmail, displayName } = await request.json();
 
     if (!companyId || !userId || !newEmail) {
       return NextResponse.json({ error: "companyId, userId, and newEmail are required." }, { status: 400 });
+    }
+
+    // Only a superadmin or a company_admin of this tenant may change emails.
+    const caller = await resolveTargetTenant(callerUid, companyId);
+    if (!caller.isSuperadmin && caller.role !== "company_admin") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const adminDb = getAdminDb();
@@ -68,8 +77,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("Update email error:", err);
-    const message = err instanceof Error ? err.message : "Failed to update email.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      console.error("Update email error:", err);
+      const message = err instanceof Error ? err.message : "Failed to update email.";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 }

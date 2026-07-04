@@ -8,6 +8,7 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { bearerHeader } from "@/lib/api-client";
 import type { UserProfile, UserRole } from "@/types/auth";
 
 function usersRef(companyId: string) {
@@ -118,7 +119,7 @@ export async function updateUserEmail(
 ): Promise<{ error?: string }> {
   const res = await fetch("/api/users/update-email", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
     body: JSON.stringify({ companyId, userId, newEmail, displayName }),
   });
   const data = await res.json();
