@@ -813,8 +813,10 @@ export default function TeamsPage() {
     try {
       const res = await fetch("/api/users/reset-password", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, displayName }),
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
+        // companyId lets the server confirm the caller administers this
+        // tenant, unlocking the detailed diagnostic responses for admins.
+        body: JSON.stringify({ email, displayName, companyId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

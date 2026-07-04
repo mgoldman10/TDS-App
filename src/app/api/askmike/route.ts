@@ -1,16 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { ANTHROPIC_MODEL, ANTHROPIC_VERSION } from "@/lib/ai-config";
+import { apiAuthErrorResponse, verifyApiCaller } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    // Any valid login may use AskMike — the gate is against anonymous
+    // internet callers burning our Anthropic budget, not against roles.
+    await verifyApiCaller(request);
+
     const body = await request.json();
     const { coachId, messages, context } = body;
 
     if (!coachId || !messages || !Array.isArray(messages)) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+
+    // Cap request size: bounds Anthropic spend per call and blocks
+    // resource-exhaustion payloads. 50k characters is far above any
+    // legitimate coaching conversation.
+    const totalChars =
+      messages.reduce(
+        (sum: number, m: { content?: unknown }) =>
+          sum + (typeof m.content === "string" ? m.content.length : 0),
+        0
+      ) + (typeof context === "string" ? context.length : 0);
+    if (messages.length > 100 || totalChars > 50_000) {
+      return NextResponse.json(
+        { error: "Request too large. Start a new conversation and try again." },
+        { status: 413 }
+      );
     }
 
     // Fetch coach config fresh from Firestore
@@ -93,11 +114,16 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ message: assistantMessage });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("AskMike API error:", message);
-    return NextResponse.json(
-      { error: "Failed to process request", detail: message },
-      { status: 500 }
-    );
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("AskMike API error:", message);
+      // Log the detail server-side only — never echo internals to the caller.
+      return NextResponse.json(
+        { error: "Failed to process request" },
+        { status: 500 }
+      );
+    }
   }
 }

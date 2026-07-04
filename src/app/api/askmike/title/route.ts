@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ANTHROPIC_MODEL, ANTHROPIC_VERSION } from "@/lib/ai-config";
+import { apiAuthErrorResponse, verifyApiCaller } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,11 +11,27 @@ interface IncomingMessage {
 
 export async function POST(request: NextRequest) {
   try {
+    // Any valid login may use AskMike — the gate is against anonymous
+    // internet callers burning our Anthropic budget, not against roles.
+    await verifyApiCaller(request);
+
     const body = await request.json();
     const { messages } = body as { messages: IncomingMessage[] };
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json({ error: "Missing messages" }, { status: 400 });
+    }
+
+    // Cap request size (same rationale as the main AskMike route).
+    const totalChars = messages.reduce(
+      (sum, m) => sum + (typeof m.content === "string" ? m.content.length : 0),
+      0
+    );
+    if (messages.length > 100 || totalChars > 50_000) {
+      return NextResponse.json(
+        { error: "Request too large." },
+        { status: 413 }
+      );
     }
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -63,11 +80,16 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ title });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Title API error:", message);
-    return NextResponse.json(
-      { error: "Failed to process request", detail: message },
-      { status: 500 }
-    );
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("Title API error:", message);
+      // Log the detail server-side only — never echo internals to the caller.
+      return NextResponse.json(
+        { error: "Failed to process request" },
+        { status: 500 }
+      );
+    }
   }
 }

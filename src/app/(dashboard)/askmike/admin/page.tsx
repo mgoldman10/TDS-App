@@ -13,6 +13,7 @@ import {
   deleteReferenceDocument,
 } from "@/lib/coach-service";
 import { uploadFile } from "@/lib/storage-service";
+import { bearerHeader } from "@/lib/api-client";
 import type { Coach, ReferenceDocument } from "@/types/coach";
 import TrashIcon from "@/components/TrashIcon";
 
@@ -150,6 +151,9 @@ export default function AskMikeAdminPage() {
       formData.append("file", file);
       const res = await fetch("/api/extract-pdf", {
         method: "POST",
+        // File upload: no Content-Type header (the browser sets the
+        // multipart boundary itself) — only the auth token is added.
+        headers: { ...(await bearerHeader()) },
         body: formData,
       });
       const data = await res.json();

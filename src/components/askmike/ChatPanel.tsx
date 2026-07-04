@@ -8,6 +8,7 @@ import {
   updateTranscriptTitle,
 } from "@/lib/coach-service";
 import { anonymize, deanonymize } from "@/lib/anonymize";
+import { bearerHeader } from "@/lib/api-client";
 import type { ChatMessage, Transcript } from "@/types/coach";
 import type { NameMapping } from "@/lib/anonymize";
 
@@ -140,7 +141,7 @@ export default function ChatPanel({
         .map((m) => ({ ...m, content: anonymize(m.content, nameMapping) }));
       const res = await fetch("/api/askmike/title", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({ messages: anonymized }),
       });
       if (!res.ok) return;
@@ -174,7 +175,7 @@ export default function ChatPanel({
 
       const res = await fetch("/api/askmike", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({
           coachId,
           messages: anonymizedMessages,
