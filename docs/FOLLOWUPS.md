@@ -5,6 +5,29 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### Staging environment seeded for the first time (2026-07-04)
+Discovered: 2026-07-04, during T-S1 Stage 1 security verification
+
+TDS's staging environment (branch, Firebase project, deploy pipeline) has existed structurally, but had never actually been seeded with test data or working test accounts until 2026-07-04. Running `npm run seed:staging:apply` created 3 test companies (Aurora Manufacturing, Beacon Logistics, Crescent Consulting), 18 tenant users, and 1 global superadmin (mike.goldman@tds-test.example.com), all with password StagingTest2026!. This unblocks manual and scripted testing against staging going forward.
+
+Status: DONE 2026-07-04 — staging now has working seeded test accounts.
+
+### Staging seed credential (FIREBASE_ADMIN_SERVICE_ACCOUNT_STAGING) only exists on Mike's local machine
+Discovered: 2026-07-04, while unblocking T-S1 Stage 1 verification
+
+The seed script requires a dedicated staging service-account credential (`FIREBASE_ADMIN_SERVICE_ACCOUNT_STAGING`) in `.env.local` to run. This was missing entirely until added locally on 2026-07-04. It currently exists only on Mike's laptop — if Ximena or a future developer needs to re-run the seed script from a different machine, they'll hit the same missing-credential block. Related to the existing open item about TDS staging service-account key rotation/hygiene.
+
+Fix shape: document where to retrieve this credential (Firebase Console > tds-app-staging > Project Settings > Service Accounts) and decide on a shared, secure way for the team to access it if more than one person needs to run staging seed/admin operations.
+
+Status: Open, low priority (only matters if someone besides Mike needs to run staging admin scripts).
+
+### Seed script document count discrepancy (170 planned vs 169 confirmed) — likely benign
+Discovered: 2026-07-04, during staging seed verification
+
+The dry-run for `seed:staging` projected 170 documents would be created. The subsequent idempotent re-run (after a successful apply) reported 169 skipped. No errors occurred in either run. Likely explanation: the two AskMike coach records are matched idempotently by name/type rather than a fixed ID, causing a 1-document counting discrepancy that isn't a real data problem.
+
+Status: Open, very low priority — cosmetic/counting nuance, not a functional issue. Worth a quick look next time someone is in the seed script for other reasons, not worth a dedicated session.
+
 ### FIREBASE_ADMIN_SERVICE_ACCOUNT: mark Secret in Netlify + rotate service account keys
 Captured: 2026-07-01
 Priority: Medium
