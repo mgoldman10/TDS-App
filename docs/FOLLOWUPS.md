@@ -5,6 +5,24 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### Server-side leadership-scope enforcement for tenant-member routes
+Discovered: 2026-07-04, during T-S1 Stage 2 (gating the Tier 2 routes)
+
+As of Stage 2, `users/archive`, `users/restore`, and `users/assign-team` verify that the caller is a logged-in, active member of the company named in the request (superadmin passes). What they do NOT yet verify is whether the caller's specific team-leadership scope covers the person or team being acted on. The app's UI already restricts this correctly — a team leader only sees archive/restore/assign buttons for people and teams within their own scope — so this gap only affects someone who bypasses the UI and calls the API directly with a valid login for that company. Concretely: a leader at Company X could hand-craft an API call to archive a colleague outside their team, or assign themselves leadership of a team they shouldn't manage (which affects visibility of private assessment data).
+
+Fix shape: replicate the team-scope logic (own teams plus descendant sub-teams, as computed client-side via getAuthorizedTeamIds) on the server, and enforce it in these three routes for non-admin callers. Company admins and superadmins would be unaffected.
+
+Status: Open, low-to-medium priority — requires a valid tenant login to exploit, so the exposure is a malicious or compromised *insider*, not the open internet. Candidate for a future T-S1 stage.
+
+### users/reset-password route is still unauthenticated
+Discovered: 2026-07-04 (re-confirmed), during T-S1 Stage 2 investigation
+
+`src/app/api/users/reset-password/route.ts` sits alongside the routes gated in Stages 1–2 but has no authentication check yet. It was already identified in the original T-S1 report as Tier 3 (medium severity) and was deliberately not part of Stage 2's scope. Logged here so it stays visible on the list and doesn't get lost between stages.
+
+Fix shape: same pattern as Stage 2 — verifyApiCaller first, then an appropriate gate (likely superadmin or company_admin of the tenant, since password resets are an admin action in the UI), plus bearerHeader() on its client call site(s).
+
+Status: Open, medium priority — next in line for a future T-S1 stage alongside the remaining Tier 3 routes.
+
 ### Staging environment seeded for the first time (2026-07-04)
 Discovered: 2026-07-04, during T-S1 Stage 1 security verification
 
