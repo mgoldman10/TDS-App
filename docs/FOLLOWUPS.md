@@ -5,6 +5,30 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
+### Cost monitoring on AskMike
+Discovered: 2026-07-04, during T-S1 Stage 3 (mirrors the BLT Planner entry of the same name)
+
+No per-coach, per-tenant, or per-user-session cost visibility for Anthropic API spend through TDS's AskMike feature. There's currently no telemetry showing usage trajectory: how many AskMike turns happen per day, which coaches are most-used, which queries are most expensive, how cost scales with concurrent users across TDS's tenants.
+
+Why it matters: informs infrastructure decisions (like the rate-limiting work noted separately), detects abuse or runaway costs before they appear on the bill, and matters more as more of the six certified coaches and their client companies use AskMike.
+
+Fix shape: log per-request token usage (input/output tokens) from the Anthropic API response on every AskMike call; write to a Firestore collection tracking daily aggregates per coach per company; a simple superadmin-only admin view showing spend trends; optional alerting when daily spend crosses a threshold.
+
+Cross-reference: this mirrors an existing entry in BLT Planner's docs/FOLLOWUPS.md by the same name — the two apps share the same underlying cost driver (Anthropic API via AskMike) and could eventually share monitoring infrastructure.
+
+Status: Open, medium priority — becomes more urgent as coach/client usage scales.
+
+### Rate limiting needed for public-facing and AI-proxy routes (askmike, askmike/title, reset-password)
+Discovered: 2026-07-04, during T-S1 Stage 3
+
+Stage 3 added login gates and input/file-size caps to these routes, which closes the "unlimited anonymous abuse" risk — a stranger on the internet can no longer burn the Anthropic budget or trigger reset emails at all. What is NOT in place is true rate limiting: blocking a specific user or IP after too many requests in a short window. That requires shared infrastructure (something like Redis, or a platform-level rate-limiting feature) that this app doesn't currently have — the serverless functions don't share memory between requests, so a simple in-code counter can't work reliably.
+
+Remaining gap this would close: a logged-in bad actor (or a compromised account) could still hammer askmike/askmike/title (cost, per-call bounded by the 50k-char input cap and max_tokens) or reset-password (annoyance-spam of reset emails to a victim's inbox; the anti-enumeration fix means they learn nothing from the responses).
+
+Distinct from, but related to, two entries in the BLT repo's docs/FOLLOWUPS.md: "Cost monitoring on AskMike" and "#37 — Cost and rate-limit monitoring (Anthropic + Netlify + Resend)". Those are about tracking and managing legitimate usage costs; this entry is specifically about preventing abusive/excessive request volume regardless of cost. Whatever infrastructure decision is made should probably serve both apps.
+
+Status: Open, low-to-medium priority — the Stage 3 login gate already removes the worst-case "anyone on Earth, unlimited" scenario.
+
 ### Server-side leadership-scope enforcement for tenant-member routes
 Discovered: 2026-07-04, during T-S1 Stage 2 (gating the Tier 2 routes)
 
