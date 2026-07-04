@@ -77,7 +77,7 @@ export async function deactivateUser(
 ): Promise<{ error?: string; leadingTeams?: { id: string; name: string }[] }> {
   const res = await fetch("/api/users/archive", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
     body: JSON.stringify({ companyId, userId, reason }),
   });
   const data = await res.json();
@@ -103,7 +103,7 @@ export async function reactivateUser(
 ): Promise<{ error?: string }> {
   const res = await fetch("/api/users/restore", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
     body: JSON.stringify({ companyId, archivedUserId }),
   });
   const data = await res.json();

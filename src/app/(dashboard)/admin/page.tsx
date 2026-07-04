@@ -101,7 +101,7 @@ export default function AdminPage() {
     try {
       const res = await fetch("/api/companies/archive", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({ companyId: c.id }),
       });
       const data = await res.json();
@@ -126,7 +126,7 @@ export default function AdminPage() {
     try {
       const res = await fetch("/api/companies/restore", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({ companyId: c.id }),
       });
       const data = await res.json();

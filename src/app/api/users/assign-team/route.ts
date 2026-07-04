@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase-admin";
+import { apiAuthErrorResponse, resolveTargetTenant, verifyApiCaller } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,8 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(request: NextRequest) {
   try {
+    const { uid: callerUid } = await verifyApiCaller(request);
+
     const { companyId, userId, leadsExistingTeamId, leadsNewTeam } =
       (await request.json()) as {
         companyId?: string;
@@ -25,6 +28,11 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Caller must be an active member of this company (superadmin passes).
+    // Whether the caller's leadership scope covers this specific team is
+    // still enforced client-side only — see FOLLOWUPS (T-S1 scope stage).
+    await resolveTargetTenant(callerUid, companyId);
 
     if (leadsExistingTeamId && leadsNewTeam) {
       return NextResponse.json(
@@ -116,8 +124,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, ledTeamId, replacedLeaderId });
   } catch (err) {
-    console.error("Assign team error:", err);
-    const message = err instanceof Error ? err.message : "Failed to assign team.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      console.error("Assign team error:", err);
+      const message = err instanceof Error ? err.message : "Failed to assign team.";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 }

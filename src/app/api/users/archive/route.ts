@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase-admin";
+import { apiAuthErrorResponse, resolveTargetTenant, verifyApiCaller } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
+    const { uid: callerUid } = await verifyApiCaller(request);
+
     const { companyId, userId, reason } = await request.json();
 
     if (!companyId || !userId) {
@@ -13,6 +16,11 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Caller must be an active member of this company (superadmin passes).
+    // Whether the caller's leadership scope covers this specific user is
+    // still enforced client-side only — see FOLLOWUPS (T-S1 scope stage).
+    await resolveTargetTenant(callerUid, companyId);
 
     const adminDb = getAdminDb();
     const userRef = adminDb.doc(`companies/${companyId}/users/${userId}`);
@@ -130,9 +138,13 @@ export async function POST(request: NextRequest) {
       archivedMemberCount: linkedMembersSnap.size,
     });
   } catch (err) {
-    console.error("Archive user error:", err);
-    const message =
-      err instanceof Error ? err.message : "Failed to archive user.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      console.error("Archive user error:", err);
+      const message =
+        err instanceof Error ? err.message : "Failed to archive user.";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 }

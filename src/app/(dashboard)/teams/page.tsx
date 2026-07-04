@@ -904,7 +904,7 @@ export default function TeamsPage() {
     try {
       const res = await fetch("/api/users/assign-team", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(await bearerHeader()) },
         body: JSON.stringify({
           companyId,
           userId,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { apiAuthErrorResponse, requireSuperadmin, verifyApiCaller } from "@/lib/api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,10 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(request: NextRequest) {
   try {
+    // Restoring an archived tenant is a superadmin-only operation.
+    const { uid: callerUid } = await verifyApiCaller(request);
+    await requireSuperadmin(callerUid);
+
     const { companyId } = (await request.json()) as { companyId?: string };
     if (!companyId) {
       return NextResponse.json(
@@ -35,9 +40,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("Restore company error:", err);
-    const message =
-      err instanceof Error ? err.message : "Failed to restore company.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    try {
+      return apiAuthErrorResponse(err);
+    } catch {
+      console.error("Restore company error:", err);
+      const message =
+        err instanceof Error ? err.message : "Failed to restore company.";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 }
