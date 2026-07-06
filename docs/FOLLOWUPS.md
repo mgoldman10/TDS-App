@@ -5,7 +5,8 @@ Add new items at the top. Strike through items as they're shipped.
 
 ## Open
 
-### PDF text extraction broken in extract-pdf route (pre-existing bug, unrelated to T-S1)
+### #15 — PDF text extraction broken in extract-pdf route (pre-existing bug, unrelated to T-S1)
+Priority: Low
 Discovered: 2026-07-04, during T-S1 Stage 3 verification
 
 While verifying the new superadmin-only gate on extract-pdf, uploading a real PDF file returns a 500 error. The installed pdf-parse library (version 2.x) has a different interface than the one this route's code was written for, so PDF text extraction has been broken since before Stage 3 — invisible until now because only a superadmin can reach this feature, and it hadn't been recently tested. Word document (.docx) uploads through the same route work correctly; this is specific to PDF files. This bug exists in production too, not just staging.
@@ -14,7 +15,8 @@ Fix shape: update the route's PDF-parsing code to match pdf-parse 2.x's actual i
 
 Status: Open, low priority — affects only an admin-only, infrequently-used feature (uploading reference PDFs for the AI assistant's knowledge base).
 
-### Cost monitoring on AskMike
+### #14 — Cost monitoring on AskMike
+Priority: Medium
 Discovered: 2026-07-04, during T-S1 Stage 3 (mirrors the BLT Planner entry of the same name)
 
 No per-coach, per-tenant, or per-user-session cost visibility for Anthropic API spend through TDS's AskMike feature. There's currently no telemetry showing usage trajectory: how many AskMike turns happen per day, which coaches are most-used, which queries are most expensive, how cost scales with concurrent users across TDS's tenants.
@@ -27,7 +29,8 @@ Cross-reference: this mirrors an existing entry in BLT Planner's docs/FOLLOWUPS.
 
 Status: Open, medium priority — becomes more urgent as coach/client usage scales.
 
-### Rate limiting needed for public-facing and AI-proxy routes (askmike, askmike/title, reset-password)
+### #13 — Rate limiting needed for public-facing and AI-proxy routes (askmike, askmike/title, reset-password)
+Priority: Low-to-Medium
 Discovered: 2026-07-04, during T-S1 Stage 3
 
 Stage 3 added login gates and input/file-size caps to these routes, which closes the "unlimited anonymous abuse" risk — a stranger on the internet can no longer burn the Anthropic budget or trigger reset emails at all. What is NOT in place is true rate limiting: blocking a specific user or IP after too many requests in a short window. That requires shared infrastructure (something like Redis, or a platform-level rate-limiting feature) that this app doesn't currently have — the serverless functions don't share memory between requests, so a simple in-code counter can't work reliably.
@@ -38,7 +41,8 @@ Distinct from, but related to, two entries in the BLT repo's docs/FOLLOWUPS.md: 
 
 Status: Open, low-to-medium priority — the Stage 3 login gate already removes the worst-case "anyone on Earth, unlimited" scenario.
 
-### Server-side leadership-scope enforcement for tenant-member routes
+### #12 — Server-side leadership-scope enforcement for tenant-member routes
+Priority: Low-to-Medium
 Discovered: 2026-07-04, during T-S1 Stage 2 (gating the Tier 2 routes)
 
 As of Stage 2, `users/archive`, `users/restore`, and `users/assign-team` verify that the caller is a logged-in, active member of the company named in the request (superadmin passes). What they do NOT yet verify is whether the caller's specific team-leadership scope covers the person or team being acted on. The app's UI already restricts this correctly — a team leader only sees archive/restore/assign buttons for people and teams within their own scope — so this gap only affects someone who bypasses the UI and calls the API directly with a valid login for that company. Concretely: a leader at Company X could hand-craft an API call to archive a colleague outside their team, or assign themselves leadership of a team they shouldn't manage (which affects visibility of private assessment data).
@@ -47,7 +51,8 @@ Fix shape: replicate the team-scope logic (own teams plus descendant sub-teams, 
 
 Status: Open, low-to-medium priority — requires a valid tenant login to exploit, so the exposure is a malicious or compromised *insider*, not the open internet. Candidate for a future T-S1 stage.
 
-### users/reset-password route is still unauthenticated
+### #11 — users/reset-password route is still unauthenticated
+Priority: Medium
 Discovered: 2026-07-04 (re-confirmed), during T-S1 Stage 2 investigation
 
 `src/app/api/users/reset-password/route.ts` sits alongside the routes gated in Stages 1–2 but has no authentication check yet. It was already identified in the original T-S1 report as Tier 3 (medium severity) and was deliberately not part of Stage 2's scope. Logged here so it stays visible on the list and doesn't get lost between stages.
@@ -56,14 +61,8 @@ Fix shape: same pattern as Stage 2 — verifyApiCaller first, then an appropriat
 
 Status: Open, medium priority — next in line for a future T-S1 stage alongside the remaining Tier 3 routes.
 
-### Staging environment seeded for the first time (2026-07-04)
-Discovered: 2026-07-04, during T-S1 Stage 1 security verification
-
-TDS's staging environment (branch, Firebase project, deploy pipeline) has existed structurally, but had never actually been seeded with test data or working test accounts until 2026-07-04. Running `npm run seed:staging:apply` created 3 test companies (Aurora Manufacturing, Beacon Logistics, Crescent Consulting), 18 tenant users, and 1 global superadmin (mike.goldman@tds-test.example.com), all with password StagingTest2026!. This unblocks manual and scripted testing against staging going forward.
-
-Status: DONE 2026-07-04 — staging now has working seeded test accounts.
-
-### Staging seed credential (FIREBASE_ADMIN_SERVICE_ACCOUNT_STAGING) only exists on Mike's local machine
+### #10 — Staging seed credential (FIREBASE_ADMIN_SERVICE_ACCOUNT_STAGING) only exists on Mike's local machine
+Priority: Low
 Discovered: 2026-07-04, while unblocking T-S1 Stage 1 verification
 
 The seed script requires a dedicated staging service-account credential (`FIREBASE_ADMIN_SERVICE_ACCOUNT_STAGING`) in `.env.local` to run. This was missing entirely until added locally on 2026-07-04. It currently exists only on Mike's laptop — if Ximena or a future developer needs to re-run the seed script from a different machine, they'll hit the same missing-credential block. Related to the existing open item about TDS staging service-account key rotation/hygiene.
@@ -72,14 +71,16 @@ Fix shape: document where to retrieve this credential (Firebase Console > tds-ap
 
 Status: Open, low priority (only matters if someone besides Mike needs to run staging admin scripts).
 
-### Seed script document count discrepancy (170 planned vs 169 confirmed) — likely benign
+### #9 — Seed script document count discrepancy (170 planned vs 169 confirmed) — likely benign
+Priority: Very low
 Discovered: 2026-07-04, during staging seed verification
 
 The dry-run for `seed:staging` projected 170 documents would be created. The subsequent idempotent re-run (after a successful apply) reported 169 skipped. No errors occurred in either run. Likely explanation: the two AskMike coach records are matched idempotently by name/type rather than a fixed ID, causing a 1-document counting discrepancy that isn't a real data problem.
 
 Status: Open, very low priority — cosmetic/counting nuance, not a functional issue. Worth a quick look next time someone is in the seed script for other reasons, not worth a dedicated session.
 
-### FIREBASE_ADMIN_SERVICE_ACCOUNT: mark Secret in Netlify + rotate service account keys
+### #8 — FIREBASE_ADMIN_SERVICE_ACCOUNT: mark Secret in Netlify + rotate service account keys
+Priority: Medium
 Captured: 2026-07-01
 Priority: Medium
 
@@ -107,32 +108,8 @@ After each rotation:
 
 **Verification:** After rotation, verify TDS staging and production sign-in work under the new credentials. Test at least one Firestore read and one Firestore write per environment through the app UI.
 
-### Anthropic model id hardcoded — retirement time-bomb (learning from BLT)
-STATUS: SHIPPED 2026-06-20
-Fix: Centralized Anthropic model config in src/lib/ai-config.ts.
-Replaced hardcoded claude-sonnet-4-20250514 with ANTHROPIC_MODEL
-constant in both AskMike routes (route.ts, title/route.ts).
-Confirmed working in staging (local dev) and production.
-Commits: d65a169 (config), b527dc4 (routes).
-Priority: HIGH — possible live silent outage; verify ASAP.
-Source: 2026-06-20 BLT AskMike outage. BLT hardcoded claude-sonnet-4-20250514,
-which Anthropic RETIRED 2026-06-15; every AI call has 404'd silently since, in
-both BLT environments. TDS uses the same Anthropic Messages API server-side and
-may share the pattern.
-
-Action:
-1. URGENT — grep TDS for any hardcoded Anthropic model id, especially
-   claude-sonnet-4-20250514 or claude-opus-4-20250514 (both retired 06-15). If
-   present, TDS's AI is likely broken right now. Migrate to the current same-tier
-   id (Sonnet -> claude-sonnet-4-6; Opus -> claude-opus-4-8; note Opus has
-   API-breaking sampling-param changes, Sonnet does not).
-2. Centralize the model id in ONE place (env var/constant).
-3. Add alerting on AI-call failures so a future retirement surfaces same-day
-   (ties to the planned TDS AI cost monitoring).
-General principle: silent failures on critical paths need alerting, not just
-logging — assume silence != success.
-
-### Migrate transactional email from Resend to Postmark (or similar low-volume specialist)
+### #7 — Migrate transactional email from Resend to Postmark (or similar low-volume specialist)
+Priority: Low (rises once beta clients start receiving email)
 
 Discovered: 2026-06-01, in parallel with the same finding on BLT Planner.
 
@@ -154,7 +131,8 @@ Code changes: YES, expected. Unlike BLT (which uses nodemailer + generic SMTP en
 
 Best done in tandem with BLT's migration if the sending domain is shared. Not blocking anything urgent (TDS has no live external users yet).
 
-### Set up Firestore backup protection on production (tds-app-b8493)
+### #6 — Set up Firestore backup protection on production (tds-app-b8493)
+Priority: Medium (raise to High before any beta client loads real data into TDS)
 
 Discovered: 2026-06-01, in parallel with the same finding on BLT Planner.
 
@@ -188,7 +166,8 @@ Cost: pennies/month for a small-volume free-tier database.
 
 Lower urgency than BLT (TDS has no live external clients yet), but the gap is identical and the recipe is already proven. Worth knocking out at the same priority level since the work is mechanical.
 
-### Staging email env vars — clean up after Resend rotation
+### #5 — Staging email env vars — clean up after Resend rotation
+Priority: Low
 Discovered 2026-05-21. Phase 4 (staging deploy context configuration) left the staging email config in an ambiguous state:
 
 - `EMAIL_FROM` and `EMAIL_FROM_NAME` env:set commands on staging contexts were **silent CLI no-ops** — the API view still shows them as only "All"-scoped, so staging contexts inherit the production FROM values.
@@ -198,7 +177,8 @@ Discovered 2026-05-21. Phase 4 (staging deploy context configuration) left the s
 
 When picked up (alongside the Resend rotation): set empty-string `RESEND_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` on `deploy-preview` + `branch-deploy` via authoritative curl PATCH (CLI `env:set` silently no-ops for these; the PATCH endpoint we discovered in Phase 4 — `PATCH /accounts/{slug}/env/{key}?site_id=…` — works). Verify via raw API with ALL contexts' values suppressed in any diagnostic output (per the dev-context leak lesson). Recommend updating CLAUDE.md "Acceptable patterns" with: *when iterating env-var contexts via API for any secret-bearing var, suppress value display for ALL contexts — never assume any context is non-sensitive.*
 
-### AskMike name anonymization round-trip not re-hydrating
+### #4 — AskMike name anonymization round-trip not re-hydrating
+Priority: Medium-high
 Discovered: 2026-05-20
 
 INTENDED DESIGN (per Mike): AskMike is supposed to protect privacy via an anonymize-then-rehydrate round trip:
@@ -224,30 +204,8 @@ Diagnostic angle when picked up:
 
 Status: open. Privacy mechanism partially working — names appear NOT to be reaching Anthropic (good), but re-hydration is not restoring them for the user (the bug). Medium-high priority: it degrades AskMike's usefulness (can't reference people by name) and indicates the privacy round-trip code has a gap worth understanding fully.
 
-### 2026-05-20 credential exposure incident — TDS production secrets
-Discovered: 2026-05-20
-
-**RESOLVED 2026-05-21:** all three Firebase-side items complete — `bb393c78` revoked, `3b4ee474` revoked, `f2e777ca` deleted. Both exposed credentials (Firebase SA key + Anthropic API key) rotated and verified in production. Detail per checkbox below.
-
-During the Phase 3.2 / Phase 4 setup work, two Claude Code commands dumped production credentials to terminal output (and therefore into this session's conversation transcript):
-
-1. **`grep -n FIREBASE_ADMIN_SERVICE_ACCOUNT .env.local`** — meant to locate a line for an env-file edit; instead printed the full `FIREBASE_ADMIN_SERVICE_ACCOUNT` JSON blob, including the private key (`private_key_id` prefix `bb393c78…`) for the production Firebase admin service account `firebase-adminsdk-fbsvc@tds-app-b8493.iam.gserviceaccount.com`.
-2. **`netlify env:list --plain`** — assumed `--plain` meant "names only" but it dumps values in env-file format. Exposed (a) the same Firebase SA private key (Netlify production was using the same key as local), (b) `FIREBASE_ADMIN_CLIENT_EMAIL`, and (c) the TDS production `ANTHROPIC_API_KEY` in full (prefix `sk-ant-api03-ZmrjMD5…`). This is the same TDS Anthropic key that was previously discussed on 2026-05-08 but never before fully dumped.
-
-Coincident with the 2026-05-08 BLT Anthropic key exposure (resolved via key rotation that day), this is the third production credential exposure in 48 hours.
-
-Mitigations applied 2026-05-20:
-- New CLAUDE.md section "Credential Handling — NEVER LEAK SECRETS TO CHAT" with forbidden/acceptable command patterns, intended to prevent the next occurrence.
-- Local captured plaintext files from the offending commands removed from disk (transcript still retains the values; out of our control).
-
-Rotations to complete:
-- [x] TDS Firebase admin SA key `bb393c78…` on `tds-app-b8493` — DONE 2026-05-20: rotated to `98722668…`; both `bb393c78…` and the interim partially-leaked `3b4ee474…` revoked; production runtime verified on the new key.
-- [x] TDS Anthropic API key `sk-ant-api03-ZmrjMD5…` — DONE 2026-05-20: rotated to TDS-prod-2026-05-20 key; old key revoked in Anthropic console; AskMike verified working in production.
-- [x] Orphan SA key `f2e777ca…` on `tds-app-b8493` — DISABLED 2026-05-20 (full id `f2e777ca13de354735b4ac13c73d8bdf05a6ae22`). Observation window through ~2026-05-22. Not referenced in repo / secure-keys / Netlify env / audit logs. **Observation checkpoint #1** (2026-05-20 evening, ~immediately after disable): clean — key still disabled, zero auth/permission/credential errors in GCP audit logs (query verified live against the disable event itself), production stable on `98722668`. **CLOSED 2026-05-21:** orphan key `f2e777ca` deleted after ~23h observation window. Two clean checkpoints (5/20 evening, 5/21 evening) showed zero auth/permission/credential errors, key state holding, production stable on `98722668`. No code / Netlify / disk reference to the key existed. Fresh-read verification confirms `f2e777ca` gone; SA now has only `98722668` (user-managed, production) and `3fa7b2e1` (system-managed).
-
-Status: all three rotations complete. Incident fully resolved on the Firebase + Anthropic sides; transcript-side exposure persists in conversation logs (out of our control) but no longer maps to any live credential.
-
-### TDI goals scoped per-user, not per-company
+### #3 — TDI goals scoped per-user, not per-company
+Priority: High
 Discovered: 2026-05-14
 
 User feedback from Xime via Loom 2026-05-14. When the Super Admin sets TDI goals (company-level and team-level for Q2 across quarters), those goals do not appear to other users — specifically, the CEO (company_admin) signing in afterward sees an empty TDI goals page and has to re-enter the same goals as if from scratch.
@@ -276,7 +234,8 @@ Fix shape:
 
 Status: open, real data-modeling bug. Affects trust in the goals feature. High priority once picked up.
 
-### TDI goals not visible to senior_leader role
+### #2 — TDI goals not visible to senior_leader role
+Priority: High
 Discovered: 2026-05-14
 
 User feedback from Xime via Loom 2026-05-14. After the CEO (company_admin) set TDI goals at company and team levels, a senior_leader under the CEO opened their own report view and the TDI goals page appears empty. They cannot see goals set by their admin, cannot switch quarters to view different goal sets.
@@ -292,7 +251,8 @@ Fix lands together with the per-user-scoping fix in the related entry. The data 
 
 Status: open, depends on the upstream goals-scoping fix. Both should be fixed in the same pass.
 
-### TDS save-confirmation indicator on KPI target editing
+### #1 — TDS save-confirmation indicator on KPI target editing
+Priority: Low
 Discovered: 2026-05-14
 
 User feedback from Xime via Loom 2026-05-14. When creating or editing KPI targets on a user's profile, there's no visible feedback that the save succeeded. The data does persist correctly, but the user has to navigate away and back to verify, creating uncertainty about whether actions registered. Two sub-issues:
@@ -305,31 +265,3 @@ Direct quote from Xime: "that's where I would prefer if it showed me like saving
 Fix shape: add a brief save state indicator (likely "Saving..." → "Saved" pattern, fading after ~2 seconds), and ensure target form re-populates from state when switching between targets rather than requiring a click. Estimated 30-45 min.
 
 Status: open, low-priority Phase 2 polish — UX improvement, not a functional bug.
-
-## Done
-
-### ~~Resend production API key rotation~~
-Originally noted 2026-05-21. The production TDS Resend key was exposed in chat 2026-05-21 (exposure #5 — Netlify raw API returned the `dev`-context value unmasked; the original safety check had covered only the `production` context).
-
-Rotation was initially blocked: three freshly-generated keys all returned 401 on auth tests, with the leading hypothesis being a Resend account/workspace mismatch (the new keys' owning account differed from where the originally-exposed key lived) rather than a key-format or activation problem.
-
-CLOSED 2026-05-25: rotation is complete. Verified manually in the Resend dashboard 2026-05-25 — the active TDS production key is `TDS-prod-2026-05-22` (created and in active use). NO old or orphaned TDS keys remain in the account; the originally-exposed key from 2026-05-21 is no longer present. The 2026-05-21 transcript-side exposure therefore no longer maps to any live credential. Risk: closed.
-
-(The separate "Staging email env vars — clean up after Resend rotation" follow-up remains genuinely open — the rotation is done but the per-context staging env-var cleanup it referenced wasn't done at the same time. See Open section.)
-
-### ~~TDS Firestore rules not in source control~~
-Discovered: 2026-05-14
-
-During the chat history persistence diagnosis (2026-05-14), confirmed that TDS's Firestore rules are managed only in the Firebase console — no `firestore.rules` file exists in the repo. This creates several gaps:
-
-- No git history of rules changes
-- No code-review pass on rules edits
-- No staging-vs-production parity guarantee once a staging environment exists
-- No rollback target if the console gets accidentally edited
-- Diagnostic work in this repo can't read the live rules directly
-
-Fix shape (when prioritized): extract current rules from Firebase console into `firestore.rules` at repo root; set up `firestore.indexes.json` similarly if not already present; ensure `.firebaserc` correctly identifies the TDS project; deploy rules going forward via `firebase deploy --only firestore:rules`. Matches BLT Planner's established pattern.
-
-Pursue before TDS staging environment is set up so rules-management discipline is in place from the start. Estimated 1-2 hours.
-
-CLOSED 2026-05-19: firestore.rules extracted from production console via Firebase Rules REST API, committed to repo root. firestore.indexes.json corrected from 3 to 9 composite indexes to match deployed production state. firebase.json added at repo root enabling CLI deploy workflow. .firebaserc binds repo to tds-app-b8493 as default and production. Verified via two no-op deploys 2026-05-19 — both `firebase deploy --only firestore:rules` and `firebase deploy --only firestore:indexes` confirmed source canonically matches deployed.
