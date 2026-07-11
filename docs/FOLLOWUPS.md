@@ -12,6 +12,18 @@ docs/FOLLOWUPS-ARCHIVE.md rather than striking it through here.
 > than renumbering to close the gap. (Example: #11 was folded into #13 on
 > 2026-07-06 and is intentionally absent below; this is not an error.)
 
+### #48 — AskMike prompt input is single-line; should show 2-3 lines
+Priority: Medium
+Discovered: 2026-07-11, noticed while filing the same issue in BLT Planner (BLT FOLLOWUPS #114)
+
+The AskMike chat input box only shows one line of text as the user types, even for longer questions — similar to a basic single-line text field. Affects the AskMike prompt input across TDS.
+
+Fix shape: change the input from a single-line <input> to a multi-line <textarea> (or equivalent), sized to show roughly 2-3 lines by default, ideally auto-growing as the user types. Location: wherever the AskMike chat input component lives in the TDS repo (likely a shared chat/input component).
+
+Related: BLT Planner has the same issue, tracked as BLT FOLLOWUPS #114.
+
+Status: Open, medium priority — everyday UX annoyance for anyone typing longer AskMike questions.
+
 ### #47 — Disaster recovery: runbook, Storage backup, Auth backup, backup vault
 Priority: High
 Discovered: 2026-07-06, gap identified when comparing TDS's backlog to BLT's completed disaster-recovery work
