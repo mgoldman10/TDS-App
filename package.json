@@ -2,11 +2,17 @@
   "name": "talent-density-system",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "next dev -p 3002",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "seed:staging": "tsx scripts/seed-staging.ts",
     "seed:staging:apply": "tsx scripts/seed-staging.ts --apply",
     "seed:staging:fresh": "tsx scripts/seed-staging.ts --apply --wipe-and-reseed"
@@ -30,6 +36,8 @@
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "vitest": "^4.1.9"
   }
 }
